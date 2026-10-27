@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/banner.png" alt="Defhop — Java 代码导航助手" width="720" />
+  <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/banner.png" alt="Defhop — Java 代码导航助手" width="720" />
 </p>
 
 <p align="center">
@@ -55,7 +55,7 @@ VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务�
 
 | 支付宝 | 微信 |
 |:---:|:---:|
-| <img src="media/alipay.jpg" alt="支付宝收款码" width="220" /> | <img src="media/wechat.jpg" alt="微信收款码" width="220" /> |
+| <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/alipay.jpg" alt="支付宝收款码" width="220" /> | <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/wechat.jpg" alt="微信收款码" width="220" /> |
 
 ## 性能实测（Go 引擎）
 
@@ -150,7 +150,7 @@ Wish-list welcome on GitHub:
 
 | Alipay | WeChat Pay |
 |:---:|:---:|
-| <img src="media/alipay.jpg" alt="Alipay QR" width="220" /> | <img src="media/wechat.jpg" alt="WeChat QR" width="220" /> |
+| <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/alipay.jpg" alt="Alipay QR" width="220" /> | <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/wechat.jpg" alt="WeChat QR" width="220" /> |
 
 ## Benchmarks (Go engine)
 
@@ -212,7 +212,7 @@ Command Palette → search `Defhop` for reindex and MyBatis ↔ Java routes.
 ---
 
 <p align="center">
-  <img src="media/icon.png" alt="Defhop" width="64" /><br/>
+  <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/icon.png" alt="Defhop" width="64" /><br/>
   <sub>Defhop for Java · Java 导航 · 跳转定义 · 查找引用</sub><br/>
   <sub><a href="https://github.com/iCodZilla/defhop/issues">GitHub 许愿 / Feature requests</a></sub>
 </p>

@@ -1,10 +1,10 @@
 {
   "name": "defhop",
   "displayName": "Defhop for Java",
-  "description": "Java 助手 · Go 引擎代码导航 / Instant go-to-definition & references. 跳转定义、查找引用；低内存、毫秒级跳转，专为看代码。",
-  "version": "1.0.0",
+  "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
+  "version": "1.0.2",
   "publisher": "vg0x00",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/iCodZilla/defhop.git"
@@ -20,18 +20,11 @@
   },
   "keywords": [
     "java",
-    "java助手",
-    "java导航",
-    "java跳转",
-    "代码导航",
-    "跳转定义",
-    "查找引用",
+    "java helper",
+    "java navigation",
     "go to definition",
     "find references",
-    "java helper",
     "code navigation",
-    "golang",
-    "performance",
     "mybatis",
     "spring",
     "feign",
@@ -39,8 +32,8 @@
     "mapstruct",
     "maven",
     "gradle",
-    "看代码",
-    "AI"
+    "golang",
+    "performance"
   ],
   "engines": {
     "vscode": "^1.80.0"
