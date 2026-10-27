@@ -81,23 +81,76 @@ VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务�
 
 ## 支持能力
 
-**基础导航（始终可用）**
+下列为导航能力（转到定义 / 查找引用等）。✅ = 已支持。框架类插件**检测到再用**，未用到的不占资源。
 
-- 类 / 方法 / 字段 → 定义
-- 查找引用、查找实现
-- 适合日常读 Java 源码
+### Java 语言 / 语法
 
-**框架增强（检测到才加载）**
+| 能力 | 状态 |
+|------|:----:|
+| 类 / 接口 / 枚举 → 定义 | ✅ |
+| 方法 / 构造 / 字段 → 定义 | ✅ |
+| 继承与实现（子类 / 接口实现） | ✅ |
+| 方法重载 | ✅ |
+| 泛型类型参数（如 `Box<T>`） | ✅ |
+| 查找引用（含声明） | ✅ |
+| 查找实现 | ✅ |
+| Lambda 表达式内局部变量 | ✅ |
+| 方法引用（`Type::method` / `Type::getXxx`） | ✅ |
+| Stream / Optional 链式中的跳转 | ✅ |
+| 包内跨文件类型解析 | ✅ |
 
-| 场景 | 你能跳到哪里 |
-|------|----------------|
-| **Spring** | `@Value`、配置属性 ↔ `application.yml` 等 |
-| **MyBatis** | Mapper 方法 ↔ XML SQL |
-| **OpenFeign** | Feign 接口 ↔ Controller |
-| **Lombok** | 生成出来的成员也能跳 |
-| **MapStruct** | 映射方法 / `@Mapping` 目标字段 |
+### Spring
 
-没用到的框架不会白占资源。
+| 能力 | 状态 |
+|------|:----:|
+| `@Service` / `@Component` / `@RestController` 类型跳转 | ✅ |
+| 注入字段 / 构造注入调用 → 实现 | ✅ |
+| `@Value("${…}")` ↔ `application.yml` / `.properties` | ✅ |
+| 嵌套占位符（如 `${spring.application.name}`） | ✅ |
+| `@ConfigurationProperties` 字段 ↔ 配置键 | ✅ |
+| 配置文件键 → Java `@Value` / 属性字段 | ✅ |
+
+### Spring Cloud
+
+| 能力 | 状态 |
+|------|:----:|
+| OpenFeign `@FeignClient` 方法 → Controller | ✅ |
+| Controller 方法 → Feign 引用 | ✅ |
+| 路径变量风格映射（如 `/items/{id}/…`） | ✅ |
+| `@EnableFeignClients` 工程识别 | ✅ |
+
+### MyBatis
+
+| 能力 | 状态 |
+|------|:----:|
+| Mapper 接口方法 → XML `<select\|insert\|…>` | ✅ |
+| XML statement → Java Mapper 声明 | ✅ |
+| 业务代码中调用 Mapper 方法跳转 | ✅ |
+
+### MyBatis-Plus
+
+| 能力 | 状态 |
+|------|:----:|
+| `ServiceImpl` 中 `baseMapper` → 具体 Mapper 类型 | ✅ |
+| `baseMapper.xxx()` → Mapper 自定义方法 | ✅ |
+| `BaseMapper` / `IService` 工程检测 | ✅ |
+
+### Lombok
+
+| 能力 | 状态 |
+|------|:----:|
+| `@Data` / `@Getter` / `@Setter` 生成访问器可导航 | ✅ |
+| `@Builder` 相关成员导航 | ✅ |
+| 方法引用中的 Lombok getter（如 `Customer::getName`） | ✅ |
+
+### MapStruct
+
+| 能力 | 状态 |
+|------|:----:|
+| `@Mapper` 接口方法 → 生成/手写 Impl | ✅ |
+| `@Mapping(target = "…")` → DTO / 实体字段 | ✅ |
+
+> 仓库内 `testdata/samples` 覆盖上述能力的冒烟用例（含 lambda）。
 
 ## 怎么用
 
@@ -176,20 +229,76 @@ Takeaway: medium repos are ready in under a second; ~10k-file workspaces index i
 
 ## Capabilities
 
-**Core navigation**
+Navigation features below (Go to Definition / Find References, etc.). ✅ = supported. Framework plugins load **on demand**.
 
-- Types / methods / fields → definition  
-- References & implementations  
+### Java language / syntax
 
-**On-demand framework jumps**
+| Feature | |
+|---------|:-:|
+| Class / interface / enum → definition | ✅ |
+| Method / constructor / field → definition | ✅ |
+| Inheritance & implementations | ✅ |
+| Method overloads | ✅ |
+| Generics (e.g. `Box<T>`) | ✅ |
+| Find references (incl. declaration) | ✅ |
+| Find implementations | ✅ |
+| Locals inside lambdas | ✅ |
+| Method references (`Type::method` / `Type::getXxx`) | ✅ |
+| Jumps inside Stream / Optional chains | ✅ |
+| Cross-file types in the package | ✅ |
 
-| | |
-|--|--|
-| **Spring** | `@Value` / config props ↔ YAML & friends |
-| **MyBatis** | Mapper ↔ XML SQL |
-| **OpenFeign** | Feign API ↔ Controller |
-| **Lombok** | Generated members |
-| **MapStruct** | Mappings & targets |
+### Spring
+
+| Feature | |
+|---------|:-:|
+| `@Service` / `@Component` / `@RestController` type jumps | ✅ |
+| Injected field / ctor calls → implementation | ✅ |
+| `@Value("${…}")` ↔ `application.yml` / `.properties` | ✅ |
+| Nested placeholders (e.g. `${spring.application.name}`) | ✅ |
+| `@ConfigurationProperties` field ↔ config key | ✅ |
+| Config key → Java `@Value` / property field | ✅ |
+
+### Spring Cloud
+
+| Feature | |
+|---------|:-:|
+| OpenFeign `@FeignClient` method → Controller | ✅ |
+| Controller method → Feign references | ✅ |
+| Path-variable style mappings | ✅ |
+| `@EnableFeignClients` project detection | ✅ |
+
+### MyBatis
+
+| Feature | |
+|---------|:-:|
+| Mapper method → XML `<select\|insert\|…>` | ✅ |
+| XML statement → Java Mapper | ✅ |
+| Calls to Mapper methods in business code | ✅ |
+
+### MyBatis-Plus
+
+| Feature | |
+|---------|:-:|
+| `baseMapper` in `ServiceImpl` → concrete Mapper | ✅ |
+| `baseMapper.xxx()` → custom Mapper method | ✅ |
+| `BaseMapper` / `IService` detection | ✅ |
+
+### Lombok
+
+| Feature | |
+|---------|:-:|
+| `@Data` / `@Getter` / `@Setter` generated accessors | ✅ |
+| `@Builder` member navigation | ✅ |
+| Lombok getters in method refs (e.g. `Customer::getName`) | ✅ |
+
+### MapStruct
+
+| Feature | |
+|---------|:-:|
+| `@Mapper` method → generated / hand-written Impl | ✅ |
+| `@Mapping(target = "…")` → DTO / entity field | ✅ |
+
+> See `testdata/samples` for smoke coverage (including lambdas).
 
 ## How to use
 
