@@ -13,7 +13,10 @@ Developer notes (not shown on the Marketplace). Product docs live in `README.md`
 .\build.ps1
 ```
 
-Produces `backend\defhop.exe` and runs `scripts\smoke-test.js`.
+Produces `backend\defhop.exe` and runs:
+
+- `scripts\smoke-test.js` — classic `testdata/demo` fixtures  
+- `scripts\smoke-test-samples.js` — `testdata/samples` (Java lang + lambda, Spring, Spring Cloud OpenFeign, MyBatis, MyBatis-Plus, Lombok, MapStruct)
 
 ## Performance numbers (for README)
 

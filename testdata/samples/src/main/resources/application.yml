@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: defhop-samples
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connectTimeout: 5000
+
+samples:
+  feature:
+    display-name: Sample Feature
+  bank-import:
+    enabled: true
+  greeting: hi-defhop
+
+logging:
+  level:
+    samples: DEBUG

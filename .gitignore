@@ -8,6 +8,7 @@ backend/javanav.exe
 **/.cache-*/
 testdata/**/.cache*/
 testdata/**/.cache-*/
+testdata/**/.cache/
 *.vsix
 dist/
 node_modules/

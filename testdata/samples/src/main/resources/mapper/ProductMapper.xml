@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="samples.mybatis.ProductMapper">
+    <select id="selectById" resultType="samples.lang.Order">
+        SELECT id, amount, status FROM orders WHERE id = #{id}
+    </select>
+
+    <insert id="insertOrder">
+        INSERT INTO orders(id, amount, status) VALUES (#{id}, #{amount}, #{status})
+    </insert>
+</mapper>

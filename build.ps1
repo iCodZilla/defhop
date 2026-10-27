@@ -15,13 +15,22 @@ try {
   Pop-Location
 }
 
-Write-Host "==> Smoke test"
+Write-Host "==> Smoke test (demo)"
 $Smoke = Join-Path $Root "scripts\smoke-test.js"
 if (Test-Path $Smoke) {
   node $Smoke
   if ($LASTEXITCODE -ne 0) { throw "smoke test failed" }
 } else {
-  Write-Host "    (no smoke-test.js yet — skipped)"
+  Write-Host "    (no smoke-test.js — skipped)"
+}
+
+Write-Host "==> Smoke test (samples: lang/spring/cloud/mybatis/mp/lombok/mapstruct/lambda)"
+$SmokeSamples = Join-Path $Root "scripts\smoke-test-samples.js"
+if (Test-Path $SmokeSamples) {
+  node $SmokeSamples
+  if ($LASTEXITCODE -ne 0) { throw "samples smoke test failed" }
+} else {
+  Write-Host "    (no smoke-test-samples.js — skipped)"
 }
 
 Write-Host "==> Done. Backend: $Exe"
