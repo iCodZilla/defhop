@@ -13,5 +13,7 @@ BUILD.md
 **/*.md
 !README.md
 media/defhop-icon.jpg
+media/icon-with-bg-backup.png
 media/*.psd
 **/*.vsix
+
