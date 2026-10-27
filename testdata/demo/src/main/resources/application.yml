@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: defhop-demo
+
+server:
+  port: 9090
+
+custom:
+  greeting: hi
+
+bank-import:
+  enabled: true
+  profile: prod
+
+app:
+  feature:
+    enabled: true
+    display-name: Demo Feature
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml

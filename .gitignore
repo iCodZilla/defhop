@@ -1,0 +1,16 @@
+backend/defhop
+backend/defhop.exe
+backend/javanav
+backend/javanav.exe
+**/.defhop-cache/
+**/.javanav-cache/
+**/.cache*/
+**/.cache-*/
+testdata/**/.cache*/
+testdata/**/.cache-*/
+*.vsix
+dist/
+node_modules/
+.DS_Store
+*.log
+.cache/

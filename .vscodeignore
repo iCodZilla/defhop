@@ -1,0 +1,17 @@
+backend/go/**
+testdata/**
+scripts/**
+dist/**
+.imp-cache/**
+**/.cache/**
+**/.defhop-cache/**
+**/.javanav-cache/**
+.gitignore
+.vscodeignore
+build.ps1
+BUILD.md
+**/*.md
+!README.md
+media/defhop-icon.jpg
+media/*.psd
+**/*.vsix

@@ -1,0 +1,137 @@
+{
+  "name": "defhop",
+  "displayName": "Defhop for Java",
+  "description": "Java 助手 · Go 引擎代码导航 / Instant go-to-definition & references. 跳转定义、查找引用；低内存、毫秒级跳转，专为看代码。",
+  "version": "1.0.0",
+  "publisher": "vg0x00",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iCodZilla/defhop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iCodZilla/defhop/issues"
+  },
+  "homepage": "https://github.com/iCodZilla/defhop",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1B1F24",
+    "theme": "dark"
+  },
+  "keywords": [
+    "java",
+    "java助手",
+    "java导航",
+    "java跳转",
+    "代码导航",
+    "跳转定义",
+    "查找引用",
+    "go to definition",
+    "find references",
+    "java helper",
+    "code navigation",
+    "golang",
+    "performance",
+    "mybatis",
+    "spring",
+    "feign",
+    "lombok",
+    "mapstruct",
+    "maven",
+    "gradle",
+    "看代码",
+    "AI"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:pom.xml",
+    "workspaceContains:build.gradle",
+    "workspaceContains:build.gradle.kts",
+    "workspaceContains:settings.gradle",
+    "workspaceContains:settings.gradle.kts",
+    "onLanguage:java",
+    "onLanguage:xml",
+    "onLanguage:yaml",
+    "onLanguage:properties",
+    "onCommand:defhop.reindex",
+    "onCommand:defhop.status",
+    "onCommand:defhop.goDefinition",
+    "onCommand:defhop.goMyBatisSql",
+    "onCommand:defhop.goJavaDeclaration"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "defhop.reindex",
+        "title": "Defhop: Reindex Workspace"
+      },
+      {
+        "command": "defhop.status",
+        "title": "Defhop: Show Output"
+      },
+      {
+        "command": "defhop.goDefinition",
+        "title": "Defhop: Go to Definition (instant)"
+      },
+      {
+        "command": "defhop.goMyBatisSql",
+        "title": "Defhop: Go to MyBatis SQL"
+      },
+      {
+        "command": "defhop.goJavaDeclaration",
+        "title": "Defhop: Go to Java Declaration"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "defhop.goDefinition",
+        "key": "f12",
+        "when": "editorTextFocus && !editorReadonly && resourceExtname =~ /\\.(java|xml|yml|yaml|properties)/i"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "defhop.goDefinition",
+          "when": "editorLangId == java || editorLangId == xml || editorLangId == yaml || editorLangId == properties",
+          "group": "navigation@1"
+        },
+        {
+          "command": "defhop.goMyBatisSql",
+          "when": "editorLangId == java",
+          "group": "navigation@30"
+        },
+        {
+          "command": "defhop.goJavaDeclaration",
+          "when": "editorLangId == xml",
+          "group": "navigation@30"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Defhop",
+      "properties": {
+        "defhop.excludeDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".git",
+            ".idea",
+            "node_modules",
+            "logs"
+          ],
+          "description": "Directories skipped during the initial source scan."
+        }
+      }
+    }
+  }
+}
