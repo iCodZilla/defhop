@@ -53,12 +53,37 @@ func (p *Plugin) Detect(ws *model.WorkspaceFacts) bool {
 			return true
 		}
 	}
+	// Only probe resource-tree XMLs (skip pom/web.xml/etc.); stop on first hit.
+	const maxProbe = 80
+	probed := 0
 	for _, x := range ws.XMLFiles {
+		if !isLikelyMapperXML(x, ws) {
+			continue
+		}
+		probed++
+		if probed > maxProbe {
+			break
+		}
 		data, err := os.ReadFile(x)
 		if err != nil {
 			continue
 		}
-		if strings.Contains(string(data), "<mapper") && strings.Contains(string(data), "namespace") {
+		s := string(data)
+		if strings.Contains(s, "<mapper") && strings.Contains(s, "namespace") {
+			return true
+		}
+	}
+	return false
+}
+
+func isLikelyMapperXML(path string, ws *model.WorkspaceFacts) bool {
+	slash := strings.ToLower(filepath.ToSlash(path))
+	if strings.Contains(slash, "/resources/") || strings.Contains(slash, "/mapper/") {
+		return true
+	}
+	for _, root := range ws.ResourceRoots {
+		r := strings.ToLower(filepath.ToSlash(root))
+		if r != "" && strings.HasPrefix(slash, r) {
 			return true
 		}
 	}
@@ -67,14 +92,42 @@ func (p *Plugin) Detect(ws *model.WorkspaceFacts) bool {
 
 func (p *Plugin) Index(_ context.Context, core plugin.Core, ws *model.WorkspaceFacts) error {
 	paths := discover(ws)
+	if len(paths) == 0 {
+		p.rebuildServiceMappers(core)
+		return nil
+	}
+	workers := 4
+	if n := len(paths); n < workers {
+		workers = n
+	}
+	jobs := make(chan string, len(paths))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var parsed []*Mapper
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					continue
+				}
+				if m := ParseMapper(path, string(data)); m != nil {
+					mu.Lock()
+					parsed = append(parsed, m)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if m := ParseMapper(path, string(data)); m != nil {
-			p.add(m)
-		}
+		jobs <- path
+	}
+	close(jobs)
+	wg.Wait()
+	for _, m := range parsed {
+		p.add(m)
 	}
 	p.rebuildServiceMappers(core)
 	return nil

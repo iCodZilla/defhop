@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"defhop/internal/deps"
 	"defhop/internal/java"
 	"defhop/internal/model"
 	"defhop/internal/overlay"
 	"defhop/internal/plugin"
 	"defhop/internal/plugins/feign"
+	"defhop/internal/plugins/lombok"
 	"defhop/internal/plugins/spring"
 	"defhop/internal/store"
 	"os"
@@ -24,7 +26,8 @@ import (
 
 // Hub owns overlay, symbol store, plugins, and navigation.
 type Hub struct {
-	Root     string
+	Root     string   // primary root (status / cache default)
+	Roots    []string // all workspace roots indexed together
 	CacheDir string
 	Overlay  *overlay.Store
 	Index    *store.Store
@@ -41,6 +44,11 @@ type Hub struct {
 
 	// cachePersistWG tracks async disk writes (per-file gobs + packed workspace.gob).
 	cachePersistWG sync.WaitGroup
+	// depsWG tracks background dependency-sources indexing (after setDone).
+	depsWG sync.WaitGroup
+
+	depsMu     sync.Mutex
+	depsCancel context.CancelFunc // cancels in-flight indexDependencySources
 }
 
 func New(plugins ...plugin.Plugin) *Hub {
@@ -54,6 +62,29 @@ func New(plugins ...plugin.Plugin) *Hub {
 			".vscode": true, "bin": true, "build": true, "classes": true,
 			"dist": true, "logs": true, "node_modules": true, "out": true, "target": true,
 		},
+	}
+}
+
+// stopBackgroundDeps cancels dependency indexing and waits briefly so Rebuild
+// can wipe the cache without racing PutFile into a half-deleted tree.
+func (h *Hub) stopBackgroundDeps() {
+	h.depsMu.Lock()
+	cancel := h.depsCancel
+	h.depsCancel = nil
+	h.depsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		h.depsWG.Wait()
+		h.cachePersistWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		fmt.Fprintf(os.Stderr, "[progress] rebuild: background tasks still running; continuing wipe\n")
 	}
 }
 
@@ -100,20 +131,58 @@ func (h *Hub) collectGeneratedJava(buildRoot string, javaPaths *[]string, facts 
 	}
 }
 
-// Init cold-starts the workspace: scan -> Java core parallel parse -> plugin detect+parallel index.
+// Init cold-starts a single workspace root.
 func (h *Hub) Init(ctx context.Context, root, cacheDir string) (files, symbols, refs int, elapsedMs int64, active []string, err error) {
+	return h.InitRoots(ctx, []string{root}, cacheDir)
+}
+
+// RebuildRoots deletes on-disk cache, drops in-memory fingerprint skip state,
+// then cold-builds from sources. Emits progress immediately so the UI does not
+// sit on the extension's placeholder step while background deps are cancelled.
+func (h *Hub) RebuildRoots(ctx context.Context, roots []string, cacheDir string) (files, symbols, refs int, elapsedMs int64, active []string, err error) {
+	h.progress = newProgressTracker()
+	h.progress.setScan("stopping background index...")
+	h.stopBackgroundDeps()
+	h.progress.setScan("clearing cache...")
+	h.lastWorkspaceFP = ""
+	h.pluginsReady = false
+	store.WipeCache(cacheDir)
+	return h.InitRoots(ctx, roots, cacheDir)
+}
+
+// InitRoots indexes one or more workspace folders into a single symbol store
+// (VS Code multi-root). Absolute path keys keep modules distinct.
+func (h *Hub) InitRoots(ctx context.Context, roots []string, cacheDir string) (files, symbols, refs int, elapsedMs int64, active []string, err error) {
 	start := time.Now()
-	h.Root = root
+	cleaned := make([]string, 0, len(roots))
+	seenRoot := map[string]bool{}
+	for _, r := range roots {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+		key := store.PathKey(r)
+		if seenRoot[key] {
+			continue
+		}
+		seenRoot[key] = true
+		cleaned = append(cleaned, r)
+	}
+	if len(cleaned) == 0 {
+		return 0, 0, 0, 0, nil, fmt.Errorf("workspace root required")
+	}
+	h.Root = cleaned[0]
+	h.Roots = cleaned
 	h.CacheDir = cacheDir
 	h.progress = newProgressTracker()
 	h.progress.setScan("scanning...")
 
-	facts, javaPaths, err := h.scan(root)
+	facts, javaPaths, err := h.scanAll(cleaned)
 	if err != nil {
 		return 0, 0, 0, 0, nil, err
 	}
 	h.progress.setScanDone(len(javaPaths),
-		fmt.Sprintf("scan done: %d java, %d xml", len(facts.JavaFiles), len(facts.XMLFiles)))
+		fmt.Sprintf("scan done: %d java, %d xml (%d roots)", len(facts.JavaFiles), len(facts.XMLFiles), len(cleaned)))
 
 	store.EnsureCacheVersion(cacheDir)
 	prevMeta := store.LoadManifest(cacheDir)
@@ -121,21 +190,20 @@ func (h *Hub) Init(ctx context.Context, root, cacheDir string) (files, symbols, 
 		h.progress.setHashing(done, total)
 	})
 
-	pathHashes := make(map[string]string, len(javaPaths)*3)
+	pathHashes := make(map[string]string, len(javaPaths))
 	pathBytes := make(map[string][]byte)
 	metaOut := make(map[string]store.FileMeta, len(javaPaths))
-	for _, fp := range fps {
+	for i := range fps {
+		fp := &fps[i]
 		if fp.Hash == "" {
 			continue
 		}
 		p := fp.Path
-		slash := filepath.ToSlash(p)
 		key := store.PathKey(p)
-		pathHashes[p] = fp.Hash
-		pathHashes[slash] = fp.Hash
 		pathHashes[key] = fp.Hash
 		if len(fp.Data) > 0 {
 			pathBytes[p] = fp.Data
+			fp.Data = nil // release fingerprint buffer; pathBytes owns the slice
 		}
 		metaOut[key] = fp.Meta
 	}
@@ -213,17 +281,21 @@ func (h *Hub) Init(ctx context.Context, root, cacheDir string) (files, symbols, 
 		if data, err := os.ReadFile(p); err == nil {
 			pathBytes[p] = data
 			sum := store.ContentHash(data)
-			pathHashes[p] = sum
-			pathHashes[filepath.ToSlash(p)] = sum
-			pathHashes[store.PathKey(p)] = sum
+			key := store.PathKey(p)
+			pathHashes[key] = sum
 			if info, err := os.Stat(p); err == nil {
-				metaOut[store.PathKey(p)] = store.FileMeta{
+				metaOut[key] = store.FileMeta{
 					Hash: sum, Size: info.Size(), Mtime: info.ModTime().UnixNano(),
 				}
 			}
 		}
 	}
 	parsed := h.parseJavaParallel(ctx, toParse, pathBytes, cachedN, len(javaPaths))
+	// Drop source bytes as soon as parse finishes — FileSlice no longer needs them.
+	for k := range pathBytes {
+		pathBytes[k] = nil
+	}
+	pathBytes = nil
 	for _, fd := range parsed {
 		if fd == nil {
 			continue
@@ -284,7 +356,7 @@ func (h *Hub) finishIndex(
 	writePacked bool,
 ) (files, symbols, refs int, elapsedMs int64, active []string, err error) {
 	h.Index.ReplaceAll(fileMap)
-	h.progress.setJavaReady(len(fileMap)) // unlock nav before disk / plugins
+	h.progress.setJavaReady(len(fileMap)) // unlock nav before disk / plugins / deps
 	_ = store.SaveManifest(cacheDir, metaOut)
 
 	activePlugins := h.Plugins.DetectAndActivate(facts)
@@ -301,6 +373,27 @@ func (h *Hub) finishIndex(
 	h.lastWorkspaceFP = fpSig
 	h.progress.setDone()
 
+	// Dependency sources in background — do not block INIT / status 100%.
+	rootsCopy := append([]string(nil), h.Roots...)
+	cacheCopy := cacheDir
+	var factsCopy *model.WorkspaceFacts
+	if facts != nil {
+		fc := *facts
+		factsCopy = &fc
+	}
+	depsCtx, cancel := context.WithCancel(context.Background())
+	h.depsMu.Lock()
+	if h.depsCancel != nil {
+		h.depsCancel()
+	}
+	h.depsCancel = cancel
+	h.depsMu.Unlock()
+	h.depsWG.Add(1)
+	go func() {
+		defer h.depsWG.Done()
+		h.indexDependencySources(depsCtx, rootsCopy, cacheCopy, factsCopy)
+	}()
+
 	if len(toSave) > 0 || writePacked {
 		h.persistCacheAsync(cacheDir, fpSig, fileMap, toSave, pathHashes, writePacked)
 	}
@@ -308,7 +401,70 @@ func (h *Hub) finishIndex(
 	return h.statusCounts(time.Since(start).Milliseconds())
 }
 
-// persistCacheAsync writes per-file gobs + packed workspace.gob off the Init critical path.
+// indexDependencySources materializes JDK + Maven/Gradle *-sources.jar entries
+// under cacheDir/deps and merges them into the symbol store (capped).
+func (h *Hub) indexDependencySources(ctx context.Context, roots []string, cacheDir string, facts *model.WorkspaceFacts) {
+	if cacheDir == "" || len(roots) == 0 {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+	var hits map[string]int
+	if facts != nil {
+		hits = facts.ImportHits
+	}
+	jars := deps.DiscoverSourcesJars(roots, hits)
+	if len(jars) == 0 {
+		return
+	}
+	outRoot := filepath.Join(cacheDir, "deps")
+	budget := deps.MaxTotalFiles
+	totalFiles, jarHits := 0, 0
+	for _, ref := range jars {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if budget <= 0 {
+			break
+		}
+		files, err := deps.MaterializeJar(ref, outRoot, &budget)
+		if err != nil || len(files) == 0 {
+			continue
+		}
+		jarHits++
+		for _, sf := range files {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			sum := store.ContentHash(sf.Data)
+			key := store.PathKey(sf.Path)
+			if cur := h.Index.Snapshot().File(key); cur != nil && cur.ContentHash == sum {
+				totalFiles++
+				continue
+			}
+			fd := parseSafe(sf.Path, string(sf.Data), 0)
+			if fd == nil {
+				continue
+			}
+			fd.ContentHash = sum
+			h.Index.PutFile(fd)
+			totalFiles++
+		}
+	}
+	if totalFiles > 0 {
+		fmt.Fprintf(os.Stderr, "[progress] %s\n", deps.FormatSummary(jarHits, totalFiles))
+	}
+}
+
+// persistCacheAsync writes dirty per-file gobs + packed workspace.gob off the Init
+// critical path. Per-file covers warm partial rebuilds; packed covers cold start.
 func (h *Hub) persistCacheAsync(
 	cacheDir, fpSig string,
 	fileMap, toSave map[string]*model.FileSlice,
@@ -343,8 +499,10 @@ func (h *Hub) persistCacheAsync(
 	}()
 }
 
-// FlushCachePersist waits for background cache writes (call before process exit).
+// FlushCachePersist waits for background cache writes and deps indexing
+// (call before process exit).
 func (h *Hub) FlushCachePersist() {
+	h.depsWG.Wait()
 	h.cachePersistWG.Wait()
 }
 
@@ -389,6 +547,70 @@ func workspaceFingerprint(javaPaths []string, pathHashes map[string]string) stri
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:16])
+}
+
+func (h *Hub) scanAll(roots []string) (*model.WorkspaceFacts, []string, error) {
+	if len(roots) == 0 {
+		return nil, nil, fmt.Errorf("no roots")
+	}
+	if len(roots) == 1 {
+		return h.scan(roots[0])
+	}
+	merged := &model.WorkspaceFacts{
+		Root:           roots[0],
+		AnnotationHits: map[string]int{},
+		ImportHits:     map[string]int{},
+	}
+	var javaPaths []string
+	seenJava := map[string]bool{}
+	seenXML := map[string]bool{}
+	seenCfg := map[string]bool{}
+	seenRes := map[string]bool{}
+	for _, root := range roots {
+		facts, paths, err := h.scan(root)
+		if err != nil {
+			return nil, nil, err
+		}
+		if facts.HasPom {
+			merged.HasPom = true
+		}
+		for k, v := range facts.AnnotationHits {
+			merged.AnnotationHits[k] += v
+		}
+		for k, v := range facts.ImportHits {
+			merged.ImportHits[k] += v
+		}
+		for _, p := range paths {
+			k := store.PathKey(p)
+			if !seenJava[k] {
+				seenJava[k] = true
+				javaPaths = append(javaPaths, p)
+				merged.JavaFiles = append(merged.JavaFiles, p)
+			}
+		}
+		for _, p := range facts.XMLFiles {
+			k := store.PathKey(p)
+			if !seenXML[k] {
+				seenXML[k] = true
+				merged.XMLFiles = append(merged.XMLFiles, p)
+			}
+		}
+		for _, p := range facts.ConfigFiles {
+			k := store.PathKey(p)
+			if !seenCfg[k] {
+				seenCfg[k] = true
+				merged.ConfigFiles = append(merged.ConfigFiles, p)
+			}
+		}
+		for _, p := range facts.ResourceRoots {
+			k := store.PathKey(p)
+			if !seenRes[k] {
+				seenRes[k] = true
+				merged.ResourceRoots = append(merged.ResourceRoots, p)
+			}
+		}
+	}
+	return merged, javaPaths, nil
 }
 
 func (h *Hub) scan(root string) (*model.WorkspaceFacts, []string, error) {
@@ -611,6 +833,8 @@ func parseSafe(path, text string, gen uint64) (fd *model.FileSlice) {
 	if fd == nil {
 		fd = &model.FileSlice{Path: filepath.ToSlash(path), Gen: gen}
 	}
+	// Synthesize Lombok accessors/builder/log into the slice before publish.
+	lombok.Enrich(fd)
 	return fd
 }
 
@@ -646,12 +870,43 @@ func (h *Hub) UpdateBuffer(path, text string) uint64 {
 	return gen
 }
 
+// IndexDiskFile parses one path from disk into the index (create / incremental).
+// Returns false when the file cannot be read.
+func (h *Hub) IndexDiskFile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	h.UpdateBuffer(path, string(data))
+	return true
+}
+
+// RemovePath drops a file from overlay + symbol index and notifies plugins.
+func (h *Hub) RemovePath(path string) {
+	key := store.PathKey(path)
+	h.Overlay.Remove(key)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	old := h.Index.RemoveFile(path)
+	h.lastWorkspaceFP = ""
+	ev := plugin.ChangeEvent{PathKey: key, Path: path, Old: old, New: nil}
+	for _, p := range h.Plugins.Active() {
+		p.OnFileChanged(ev)
+	}
+}
+
+// DropOverlay clears the editor overlay for a closed document (keeps disk index).
+func (h *Hub) DropOverlay(path string) {
+	h.Overlay.Remove(store.PathKey(path))
+}
+
 func (h *Hub) indexBufferAsync(path, key, text string, gen uint64) {
 	h.indexOneBuffer(path, key, text, gen)
 }
 
 // indexOneBuffer publishes one overlay generation into the symbol index.
 // Tolerant of broken Java: parseSafe always returns a FileSlice.
+// Superseded gens and unchanged content (hash match) skip the expensive parse.
 func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 	if h.Overlay.Gen(key) != gen {
 		return
@@ -659,7 +914,21 @@ func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 	lower := strings.ToLower(path)
 	ev := plugin.ChangeEvent{PathKey: key, Path: path, Text: text}
 	if strings.HasSuffix(lower, ".java") {
+		sum := store.ContentHashString(text)
+		if cur := h.Index.Snapshot().File(key); cur != nil && cur.ContentHash == sum {
+			if cur.Gen >= gen {
+				return
+			}
+			h.Index.BumpGen(path, gen)
+			return
+		}
+		if h.Overlay.Gen(key) != gen {
+			return
+		}
 		fd := parseSafe(path, text, gen)
+		if fd != nil {
+			fd.ContentHash = sum
+		}
 		if h.Overlay.Gen(key) != gen {
 			return
 		}
@@ -673,7 +942,13 @@ func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 			h.mu.Unlock()
 			return
 		}
+		if cur != nil && cur.ContentHash == sum {
+			h.mu.Unlock()
+			h.Index.BumpGen(path, gen)
+			return
+		}
 		old := h.Index.PutFile(fd)
+		h.lastWorkspaceFP = ""
 		ev.Old, ev.New = old, fd
 		for _, p := range h.Plugins.Active() {
 			p.OnFileChanged(ev)
@@ -685,6 +960,7 @@ func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 		strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml") ||
 		strings.HasSuffix(lower, ".properties") {
 		h.mu.Lock()
+		h.lastWorkspaceFP = ""
 		for _, p := range h.Plugins.Active() {
 			p.OnFileChanged(ev)
 		}
@@ -692,17 +968,43 @@ func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 	}
 }
 
-const maxSyncOverlayFlush = 64
+const maxSyncOverlayFlush = 24
 
 // publishStaleOverlays sync-indexes overlay buffers whose gen is ahead of the
-// published FileSlice. Needed so DEF on Caller.java can see a new method just
-// typed in Result.java before the async UPDATE worker finishes.
+// published FileSlice. Prefer the navigation target first, then newest gens.
+// Uses AllMeta so we do not copy every open buffer's Text up front.
 func (h *Hub) publishStaleOverlays(preferPath string) {
-	entries := h.Overlay.All()
+	entries := h.Overlay.AllMeta()
 	if len(entries) == 0 {
 		return
 	}
 	preferKey := store.PathKey(preferPath)
+	flushOne := func(e overlay.Meta) bool {
+		if e.Path == "" || !strings.HasSuffix(strings.ToLower(e.Path), ".java") {
+			return false
+		}
+		snap := h.Index.Snapshot()
+		fd := snap.File(e.Key)
+		if fd != nil && fd.Gen >= e.Gen {
+			return false
+		}
+		ent, ok := h.Overlay.Get(e.Key)
+		if !ok || ent.Gen != e.Gen {
+			return false
+		}
+		h.indexOneBuffer(ent.Path, e.Key, ent.Text, e.Gen)
+		return true
+	}
+	// Fast path: preferred file only when it is the sole interesting stale buffer.
+	if preferKey != "" {
+		for _, e := range entries {
+			if e.Key != preferKey {
+				continue
+			}
+			flushOne(e)
+			break
+		}
+	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].Key == preferKey {
 			return true
@@ -712,22 +1014,15 @@ func (h *Hub) publishStaleOverlays(preferPath string) {
 		}
 		return entries[i].Gen > entries[j].Gen
 	})
-	snap := h.Index.Snapshot()
 	n := 0
 	for _, e := range entries {
-		if e.Path == "" || !strings.HasSuffix(strings.ToLower(e.Path), ".java") {
+		if !flushOne(e) {
 			continue
 		}
-		fd := snap.File(e.Key)
-		if fd != nil && fd.Gen >= e.Gen {
-			continue
-		}
-		h.indexOneBuffer(e.Path, e.Key, e.Text, e.Gen)
 		n++
 		if n >= maxSyncOverlayFlush {
 			break
 		}
-		snap = h.Index.Snapshot()
 	}
 }
 
@@ -812,8 +1107,16 @@ func (h *Hub) Navigate(req model.NavRequest) (locs []*model.Location, navMenu st
 			// not the field itself (same-line "jump" feels like a no-op).
 			if sym.Kind == "field" && sym.TypeKey != "" && atSymbolDecl(req, sym) {
 				if tkey := snap.ResolveTypeKey(sym.TypeKey, fd); tkey != "" {
+					fqn := strings.TrimPrefix(tkey, "T|")
+					if hint := jdkConfigHint(fqn); hint != "" {
+						return nil, hint
+					}
 					if ts := snap.Symbol(tkey); ts != nil && ts.Declaration != nil {
 						return []*model.Location{ts.Declaration}, ""
+					}
+					// Field type is an external library class not yet indexed.
+					if ext := h.ensureExternalType(fqn); ext != nil && ext.Declaration != nil {
+						return []*model.Location{ext.Declaration}, ""
 					}
 				}
 			}
@@ -826,7 +1129,22 @@ func (h *Hub) Navigate(req model.NavRequest) (locs []*model.Location, navMenu st
 					}
 				}
 			}
+			// Stale JDK symbols from a previous index must not open cache when jdkHome is unset.
+			if fqn := jdkFQNOf(sym); fqn != "" {
+				if hint := jdkConfigHint(fqn); hint != "" {
+					return nil, hint
+				}
+			}
 			return []*model.Location{sym.Declaration}, ""
+		}
+		// Library type from import / unresolved type Occ (e.g. RequestConfig).
+		if fqn := externalFQNFromContext(snap, fd, offset, token, fallback, sym); fqn != "" {
+			if ext := h.ensureExternalType(fqn); ext != nil && ext.Declaration != nil {
+				return []*model.Location{ext.Declaration}, ""
+			}
+			if hint := jdkConfigHint(fqn); hint != "" {
+				return nil, hint
+			}
 		}
 	case model.NavImpl:
 		return dedupe(java.Implementations(snap, sym)), ""

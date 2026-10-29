@@ -28,7 +28,6 @@ type Plugin struct {
 	beans    map[string][]string          // interface/type key -> implementing type keys
 	cfgLocs  map[string][]*model.Location // property key -> config-file locations
 	javaLocs map[string][]*model.Location // property key -> java @Value / field locations
-	cfgFiles map[string]string            // pathKey -> last indexed text (for UPDATE)
 }
 
 func New() *Plugin {
@@ -36,7 +35,6 @@ func New() *Plugin {
 		beans:    make(map[string][]string),
 		cfgLocs:  make(map[string][]*model.Location),
 		javaLocs: make(map[string][]*model.Location),
-		cfgFiles: make(map[string]string),
 	}
 }
 
@@ -62,7 +60,6 @@ func (p *Plugin) Index(_ context.Context, core plugin.Core, ws *model.WorkspaceF
 	p.beans = make(map[string][]string)
 	p.cfgLocs = make(map[string][]*model.Location)
 	p.javaLocs = make(map[string][]*model.Location)
-	p.cfgFiles = make(map[string]string)
 
 	for _, sym := range core.Symbols() {
 		p.registerTypeLocked(sym)
@@ -90,9 +87,7 @@ func (p *Plugin) Index(_ context.Context, core plugin.Core, ws *model.WorkspaceF
 		if err != nil {
 			continue
 		}
-		text := string(data)
-		p.cfgFiles[store.PathKey(cf)] = text
-		for _, hit := range ParseConfigFile(cf, text) {
+		for _, hit := range ParseConfigFile(cf, string(data)) {
 			p.addCfgLocked(hit.Key, hit.Loc)
 		}
 	}
@@ -137,7 +132,6 @@ func (p *Plugin) reindexConfigLocked(path, text string) {
 			p.cfgLocs[k] = out
 		}
 	}
-	p.cfgFiles[pk] = text
 	for _, hit := range ParseConfigFile(path, text) {
 		p.addCfgLocked(hit.Key, hit.Loc)
 	}
@@ -398,9 +392,9 @@ func (p *Plugin) navFromConfig(req model.NavRequest) []*model.Location {
 	}
 	text := req.Text
 	if text == "" {
-		p.mu.RLock()
-		text = p.cfgFiles[store.PathKey(req.Path)]
-		p.mu.RUnlock()
+		if data, err := os.ReadFile(req.Path); err == nil {
+			text = string(data)
+		}
 	}
 	if text == "" {
 		return nil

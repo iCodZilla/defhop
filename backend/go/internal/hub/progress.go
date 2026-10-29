@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -98,7 +99,14 @@ func (t *progressTracker) setScan(msg string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.snap.Phase = "scan"
-	t.snap.Step = "扫描工作区"
+	switch {
+	case strings.Contains(msg, "clearing cache"):
+		t.snap.Step = "清除缓存"
+	case strings.Contains(msg, "stopping background"):
+		t.snap.Step = "停止后台任务"
+	default:
+		t.snap.Step = "扫描工作区"
+	}
 	t.snap.Pct = 2
 	t.snap.Message = msg
 	t.emitLocked()
@@ -227,6 +235,7 @@ func (t *progressTracker) setPlugin(id, state string) {
 
 func (t *progressTracker) recalcPluginsPctLocked() {
 	n, sum := 0, 0
+	allDone := true
 	for _, id := range knownPluginIDs {
 		pp := t.snap.Plugins[id]
 		if pp.State == "skipped" {
@@ -234,14 +243,23 @@ func (t *progressTracker) recalcPluginsPctLocked() {
 		}
 		n++
 		sum += pp.Pct
+		if pp.State != "ready" && pp.State != "error" {
+			allDone = false
+		}
 	}
 	pluginPct := 100
 	if n > 0 {
 		pluginPct = sum / n
 	}
-	// plugins occupy 82% → 99%
+	// plugins occupy 82% → 99% while any active plugin is still running.
+	// When every active plugin is finished, jump to 100% so the UI cannot
+	// sit on "Spring 完成" at 99% waiting for a later setDone (e.g. slow deps).
+	if n == 0 || allDone {
+		t.snap.Pct = 100
+		return
+	}
 	t.snap.Pct = 82 + pluginPct*17/100
-	if t.snap.Pct > 99 && pluginPct < 100 {
+	if t.snap.Pct >= 99 {
 		t.snap.Pct = 99
 	}
 }

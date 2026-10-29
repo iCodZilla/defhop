@@ -121,18 +121,28 @@ func (r *parseResult) scanRefs(p, source string, excl []iv, vnt map[string]strin
 				l := &model.Location{Path: p, Line: ln, Character: u16col(source, ls, a),
 					EndLine: ln, EndCharacter: u16col(source, ls, b), Kind: "variable", Label: w}
 				r.Occs = append(r.Occs, &model.Occ{Start: a, End: b, Location: l,
-					Role: "declaration", Name: w, TargetKey: "L|" + w})
+					Role: "declaration", Name: w, TargetKey: "L|" + w, TypeKey: et,
+					ElemType: r.elemTypes[w]})
 				continue
 			}
 		}
 
 		if (nc == '=' || nc == ';' || nc == ',' || nc == ')') && pw != "" &&
 			idS(pw[0]) && typeWord(pw) {
-			vnt[w] = "T|" + ql(pw, r.Package, r.imports)
+			ltk := "T|" + ql(pw, r.Package, r.imports)
+			vnt[w] = ltk
+			elem := r.elemTypes[w]
+			if elem == "" {
+				if _, fe := declTypeElemAt(source, a, r.Package, r.imports); fe != "" {
+					elem = fe
+					r.elemTypes[w] = fe
+				}
+			}
 			l := &model.Location{Path: p, Line: ln, Character: u16col(source, ls, a),
 				EndLine: ln, EndCharacter: u16col(source, ls, b), Kind: "variable", Label: w}
 			r.Occs = append(r.Occs, &model.Occ{Start: a, End: b, Location: l,
-				Role: "declaration", Name: w, TargetKey: "L|" + w})
+				Role: "declaration", Name: w, TargetKey: "L|" + w, TypeKey: ltk,
+				ElemType: elem})
 			continue
 		}
 
@@ -254,6 +264,59 @@ func (r *parseResult) scanRefs(p, source string, excl []iv, vnt map[string]strin
 
 	// Unique local keys + bind references to the in-scope declaration only.
 	bindLocalScopes(source, r.Occs, inExcl)
+}
+
+// declTypeElemAt reads Type<Arg> immediately left of a variable name.
+func declTypeElemAt(source string, nameStart int, pkg string, imps []string) (typeKey, elemKey string) {
+	j := nameStart - 1
+	for j >= 0 && isWS(source[j]) {
+		j--
+	}
+	if j < 0 {
+		return "", ""
+	}
+	generic := ""
+	if source[j] == '>' {
+		end := j
+		depth := 0
+		for j >= 0 {
+			switch source[j] {
+			case '>':
+				depth++
+			case '<':
+				depth--
+				if depth == 0 {
+					generic = source[j : end+1] // "<B>" or "<K,V>"
+					j--
+					for j >= 0 && isWS(source[j]) {
+						j--
+					}
+					break
+				}
+			}
+			if generic != "" {
+				break
+			}
+			j--
+		}
+		if generic == "" {
+			return "", ""
+		}
+	}
+	if j < 0 || !idP(source[j]) {
+		return "", ""
+	}
+	st := j
+	for j >= 0 && idP(source[j]) {
+		j--
+	}
+	name := source[j+1 : st+1]
+	tk := "T|" + ql(name, pkg, imps)
+	ek := ""
+	if generic != "" {
+		ek = fieldElem(name+generic, pkg, imps)
+	}
+	return tk, ek
 }
 
 func prevRecv(src string, lamA int) string {

@@ -98,6 +98,9 @@ VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务�
 | 方法引用（`Type::method` / `Type::getXxx`） | ✅ |
 | Stream / Optional 链式中的跳转 | ✅ |
 | 包内跨文件类型解析 | ✅ |
+| 依赖库源码（JDK `src.zip` / Maven·Gradle `*-sources.jar`） | ✅ |
+| 无 sources 时二进制 `.jar` / `.class` 回退（公开 API stub） | ✅ |
+| `record` 组件 / 访问器 / 方法体 | ✅ |
 
 ### Spring
 
@@ -161,7 +164,9 @@ VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务�
 
 常用命令（命令面板搜 `Defhop`）：
 
-- **Reindex Workspace** — 重新索引  
+- **Refresh Index (keep cache)** — 刷新索引（保留磁盘缓存，只重解析变更）  
+- **Clear Cache and Rebuild** — 删除缓存后全量重建  
+- **Settings / 状态栏 → Defhop JDK** — 指定 JDK 或 `src.zip`（项目 → 用户 → 环境变量 → 自动探测；可点状态栏重选/清除）  
 - **Go to MyBatis SQL** — 从 Java 跳到 Mapper XML  
 - **Go to Java Declaration** — 从 XML 跳回 Java  
 
@@ -246,6 +251,9 @@ Navigation features below (Go to Definition / Find References, etc.). ✅ = supp
 | Method references (`Type::method` / `Type::getXxx`) | ✅ |
 | Jumps inside Stream / Optional chains | ✅ |
 | Cross-file types in the package | ✅ |
+| Dependency sources (JDK `src.zip` / Maven·Gradle `*-sources.jar`) | ✅ |
+| Binary `.jar` fallback when sources are missing (public API stubs) | ✅ |
+| `record` components / accessors / body methods | ✅ |
 
 ### Spring
 
@@ -307,7 +315,8 @@ Navigation features below (Go to Definition / Find References, etc.). ✅ = supp
 3. Wait for the status-bar index  
 4. **`F12`** / Find References  
 
-Command Palette → search `Defhop` for reindex and MyBatis ↔ Java routes.
+Command Palette → search `Defhop` for **Refresh Index**, **Clear Cache and Rebuild**, and MyBatis ↔ Java routes.  
+Settings → **Defhop: Jdk Home** for `java.*` navigation (workspace → user → env → auto-detect; env/auto are saved to the workspace setting).
 
 ## vs full Java packs
 

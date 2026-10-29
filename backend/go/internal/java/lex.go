@@ -49,7 +49,8 @@ type iv struct{ a, b int }
 type lx struct {
 	src     []byte
 	pos     int
-	regions []iv
+	regions []iv // comments / skipped non-code
+	lits    []iv // string + number spans (for scanRefs excl)
 }
 
 func lxNew(src string) *lx { return &lx{src: []byte(src)} }
@@ -74,6 +75,7 @@ func (z *lx) nx() tok {
 			}
 			z.pos++
 		}
+		z.lits = append(z.lits, iv{a, z.pos})
 		return tok{t: tSTR, a: a, b: z.pos}
 	}
 	if c >= '0' && c <= '9' {
@@ -85,6 +87,7 @@ func (z *lx) nx() tok {
 			(z.src[z.pos] >= 'A' && z.src[z.pos] <= 'F')) {
 			z.pos++
 		}
+		z.lits = append(z.lits, iv{a, z.pos})
 		return tok{t: tNUM, a: a, b: z.pos}
 	}
 	if idS(c) {
@@ -178,7 +181,7 @@ func isMod(s string) bool {
 	switch s {
 	case "public", "private", "protected", "static", "abstract", "final",
 		"synchronized", "transient", "volatile", "native", "strictfp",
-		"default", "sealed":
+		"default", "sealed", "non-sealed":
 		return true
 	}
 	return false

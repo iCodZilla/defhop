@@ -418,6 +418,13 @@ func ContentHash(data []byte) string {
 	return cacheVersion + ":" + hex.EncodeToString(sum[:16])
 }
 
+// ContentHashString hashes text without requiring a separate []byte alloc from callers
+// that already hold a string (still copies once inside Sum256).
+func ContentHashString(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return cacheVersion + ":" + hex.EncodeToString(sum[:16])
+}
+
 // HashFile reads and hashes a path.
 func HashFile(path string) (string, []byte, error) {
 	data, err := os.ReadFile(path)
@@ -437,4 +444,14 @@ func EnsureCacheVersion(cacheDir string) {
 		_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
 		_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 	}
+}
+
+// WipeCache removes all on-disk index artifacts under cacheDir (gob, deps extracts, etc.).
+func WipeCache(cacheDir string) {
+	if cacheDir == "" {
+		return
+	}
+	_ = os.RemoveAll(cacheDir)
+	_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
+	_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 }

@@ -10,6 +10,8 @@ public class LangDemo {
         Box<String> box = new Box<>(animal.speak());
         int n = overloads.add(1, 2);
         Status st = Status.ACTIVE;
-        return greeter.greet(box.getValue()) + n + st.name();
+        Point pt = new Point(1, 2);
+        int s = pt.x() + pt.sum();
+        return greeter.greet(box.getValue()) + n + st.name() + s;
     }
 }

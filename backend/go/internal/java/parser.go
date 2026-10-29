@@ -47,19 +47,6 @@ func (r *parseResult) run(filePath, source string) {
 	p := filepath.ToSlash(filePath)
 	z := lxNew(source)
 
-	var excl []iv
-	probe := lxNew(source)
-	for {
-		t := probe.nx()
-		if t.t == tEOF {
-			break
-		}
-		if t.t == tSTR || t.t == tNUM {
-			excl = append(excl, iv{t.a, t.b})
-		}
-	}
-	excl = append(excl, probe.regions...)
-
 	vnt := make(map[string]string)
 	r.elemTypes = make(map[string]string)
 	r.methodElem = make(map[string]string)
@@ -138,6 +125,10 @@ func (r *parseResult) run(filePath, source string) {
 		}
 		tk = z.nx()
 	}
+	// Single-pass lexer: string/number spans + comment regions collected during parse.
+	excl := make([]iv, 0, len(z.lits)+len(z.regions))
+	excl = append(excl, z.lits...)
+	excl = append(excl, z.regions...)
 	r.scanRefs(p, source, excl, vnt)
 }
 
@@ -172,6 +163,7 @@ func (r *parseResult) parseType(tk tok, z *lx, p, source string, imps []string,
 	vnt map[string]string, anns []string, annStart int, enclosingFQN string) tok {
 
 	isIF := tk.s == "interface"
+	isRecord := tk.s == "record"
 	typeKWStart := tk.a
 	tk = z.nx()
 	if tk.t != tID {
@@ -222,6 +214,35 @@ func (r *parseResult) parseType(tk tok, z *lx, p, source string, imps []string,
 	if tk.t == tLT {
 		tk = skAng(z, tk)
 	}
+	// record Name(components) [implements ...] { body }
+	if isRecord && tk.t == tLP {
+		_, comps, next := r.parseParams(z, tk, vnt, imps)
+		tk = next
+		for _, c := range comps {
+			if c.Name == "" {
+				continue
+			}
+			ftk := "T|" + c.Type
+			fkey := "F|" + typeKey + "|" + c.Name
+			fl := locAt(p, source, c.Start, c.End, "field", c.Name)
+			if fl == nil {
+				fl = l
+			}
+			r.Symbols = append(r.Symbols, &model.Symbol{
+				Key: fkey, Kind: "field", Name: c.Name, OwnerKey: typeKey,
+				Declaration: fl, TypeKey: ftk, Imports: imps,
+			})
+			r.Occs = append(r.Occs, &model.Occ{Start: c.Start, End: c.End, Location: fl,
+				Role: "declaration", Name: c.Name, TargetKey: fkey})
+			// Accessor: same name as component (Point::x / p.x()).
+			mkey := "M|" + typeKey + "|" + c.Name + "|"
+			r.Symbols = append(r.Symbols, &model.Symbol{
+				Key: mkey, Kind: "method", Name: c.Name, OwnerKey: typeKey,
+				Declaration: fl, ReturnType: ftk, Imports: imps,
+			})
+			r.methodElem[typeKey+"#"+c.Name] = ftk
+		}
+	}
 	if tk.t == tID && tk.s == "extends" {
 		tk = z.nx()
 		scOff := tk.a
@@ -252,6 +273,21 @@ func (r *parseResult) parseType(tk tok, z *lx, p, source string, imps []string,
 				ifKey := "T|" + ql(ifn, r.Package, imps)
 				sy.SuperKeys = append(sy.SuperKeys, ifKey)
 				r.addTypeRef(ifn, ifKey, ifOff, p, source)
+			}
+			if tk.t == tCOMMA {
+				tk = z.nx()
+				continue
+			}
+			break
+		}
+	}
+	// sealed … permits A, B — skip so the body still indexes.
+	if tk.t == tID && tk.s == "permits" {
+		tk = z.nx()
+		for {
+			_, tk = readType(z, tk)
+			for tk.t == tLT {
+				tk = skAng(z, tk)
 			}
 			if tk.t == tCOMMA {
 				tk = z.nx()
@@ -374,6 +410,7 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 		if kind == "method" && ft != "" {
 			sy.ReturnType = "T|" + ql(ft, r.Package, imps)
 			if fe := fieldElem(ftFull, r.Package, imps); fe != "" {
+				sy.ElemType = fe
 				r.methodElem[typeKey+"#"+nm] = fe
 			}
 		}
@@ -414,6 +451,9 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 	l := locAt(p, source, nmTok.a, nmTok.b, "field", nm)
 	sy := &model.Symbol{Key: fkey, Kind: "field", Name: nm, OwnerKey: typeKey,
 		Declaration: l, TypeKey: ftk, Annotations: anns, Imports: imps}
+	if fe := fieldElem(ftFull, r.Package, imps); fe != "" {
+		sy.ElemType = fe
+	}
 	if hasAnn(anns, "Value") {
 		r.addValueConfigOccs(p, source, memberStart, nmTok.a, sy)
 	}
@@ -437,7 +477,11 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 	return tk
 }
 
-type paramDecl struct{ Type, Name string }
+type paramDecl struct {
+	Type       string
+	Name       string
+	Start, End int
+}
 
 func (r *parseResult) parseParams(z *lx, tk tok, vnt map[string]string, imps []string) (string, []paramDecl, tok) {
 	var params []paramDecl
@@ -521,7 +565,9 @@ func (r *parseResult) parseParams(z *lx, tk tok, vnt map[string]string, imps []s
 					r.elemTypes[pt[ni].s] = fe
 				}
 			}
-			params = append(params, paramDecl{Type: pType, Name: pt[ni].s})
+			params = append(params, paramDecl{
+				Type: pType, Name: pt[ni].s, Start: pt[ni].a, End: pt[ni].b,
+			})
 			sigParts = append(sigParts, pType)
 		}
 	}

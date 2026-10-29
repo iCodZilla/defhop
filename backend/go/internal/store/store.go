@@ -11,12 +11,13 @@ import (
 
 // Snapshot is an immutable published view for navigation reads.
 type Snapshot struct {
-	Files    map[string]*model.FileSlice
-	SymTab  map[string]*model.Symbol
+	Files      map[string]*model.FileSlice
+	SymTab     map[string]*model.Symbol
 	SubtypeIdx map[string][]string
 	Flat       map[string]string   // fqn -> T|key
 	Simple     map[string][]string // simple name -> keys
 	MethodIdx  map[string][]string // owner#name -> keys
+	FieldIdx   map[string][]string // ownerKey -> field keys (avoids SymTab scan)
 	Refs       map[string][]Ref    // symbolKey -> refs
 }
 
@@ -40,8 +41,28 @@ func New() *Store {
 	return s
 }
 
+// pathKeyIntern deduplicates PathKey strings across Files / Refs maps.
+var pathKeyIntern sync.Map // string -> string
+
 func PathKey(p string) string {
-	return strings.ToLower(filepath.ToSlash(p))
+	k := strings.ToLower(filepath.ToSlash(p))
+	if v, ok := pathKeyIntern.Load(k); ok {
+		return v.(string)
+	}
+	actual, _ := pathKeyIntern.LoadOrStore(k, k)
+	return actual.(string)
+}
+
+// Intern returns a canonical copy of s (shared when equal).
+func Intern(s string) string {
+	if s == "" {
+		return ""
+	}
+	if v, ok := pathKeyIntern.Load(s); ok {
+		return v.(string)
+	}
+	actual, _ := pathKeyIntern.LoadOrStore(s, s)
+	return actual.(string)
 }
 
 // Snapshot returns the latest published read view.
@@ -49,14 +70,14 @@ func (s *Store) Snapshot() *Snapshot {
 	return s.snap.Load()
 }
 
-// PutFile replaces one file and republishes.
+// PutFile replaces one file and republishes (incremental patch when possible).
 func (s *Store) PutFile(fd *model.FileSlice) *model.FileSlice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := PathKey(fd.Path)
 	old := s.files[key]
 	s.files[key] = fd
-	s.publishLocked()
+	s.publishDeltaLocked(key, old, fd)
 	return old
 }
 
@@ -67,7 +88,7 @@ func (s *Store) RemoveFile(path string) *model.FileSlice {
 	key := PathKey(path)
 	old := s.files[key]
 	delete(s.files, key)
-	s.publishLocked()
+	s.publishDeltaLocked(key, old, nil)
 	return old
 }
 
@@ -77,6 +98,31 @@ func (s *Store) ReplaceAll(files map[string]*model.FileSlice) {
 	defer s.mu.Unlock()
 	s.files = files
 	s.publishLocked()
+}
+
+// BumpGen updates only the FileSlice generation when content is unchanged,
+// avoiding a SymTab/Refs delta republish.
+func (s *Store) BumpGen(path string, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := PathKey(path)
+	fd := s.files[key]
+	if fd == nil || fd.Gen >= gen {
+		return false
+	}
+	cp := *fd
+	cp.Gen = gen
+	s.files[key] = &cp
+	prev := s.snap.Load()
+	if prev == nil {
+		s.publishLocked()
+		return true
+	}
+	// COW: only fork Files; all other indexes stay shared.
+	c := newCOW(prev)
+	c.mutFiles()[key] = &cp
+	s.snap.Store(c.snap)
+	return true
 }
 
 // FileCount returns indexed file count under lock.
@@ -93,12 +139,13 @@ func (s *Store) publishLocked() {
 
 func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 	snap := &Snapshot{
-		Files:    make(map[string]*model.FileSlice, len(files)),
-		SymTab:  make(map[string]*model.Symbol),
+		Files:      make(map[string]*model.FileSlice, len(files)),
+		SymTab:     make(map[string]*model.Symbol),
 		SubtypeIdx: make(map[string][]string),
 		Flat:       make(map[string]string),
 		Simple:     make(map[string][]string),
 		MethodIdx:  make(map[string][]string),
+		FieldIdx:   make(map[string][]string),
 		Refs:       make(map[string][]Ref),
 	}
 	paths := make([]string, 0, len(files))
@@ -110,9 +157,14 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 
 	for _, p := range paths {
 		fd := files[p]
+		pk := Intern(p)
 		for _, sym := range fd.Symbols {
 			if sym.Key == "" || strings.HasPrefix(sym.Key, "L|") {
 				continue
+			}
+			sym.Key = Intern(sym.Key)
+			if sym.OwnerKey != "" {
+				sym.OwnerKey = Intern(sym.OwnerKey)
 			}
 			if _, ok := snap.SymTab[sym.Key]; !ok {
 				snap.SymTab[sym.Key] = sym
@@ -126,6 +178,10 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 			case "method", "constructor":
 				mk := sym.OwnerKey + "#" + sym.Name
 				snap.MethodIdx[mk] = append(snap.MethodIdx[mk], sym.Key)
+			case "field":
+				if sym.OwnerKey != "" {
+					snap.FieldIdx[sym.OwnerKey] = append(snap.FieldIdx[sym.OwnerKey], sym.Key)
+				}
 			}
 		}
 		for _, o := range fd.Occs {
@@ -136,8 +192,9 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 			if strings.HasPrefix(o.TargetKey, "L|") {
 				continue
 			}
-			snap.Refs[o.TargetKey] = append(snap.Refs[o.TargetKey], Ref{
-				PathKey: p, Loc: o.Location, Role: o.Role,
+			tk := Intern(o.TargetKey)
+			snap.Refs[tk] = append(snap.Refs[tk], Ref{
+				PathKey: pk, Loc: o.Location, Role: o.Role,
 			})
 		}
 	}
@@ -278,9 +335,9 @@ func (snap *Snapshot) FindField(typeKey, name string) *model.Symbol {
 	if s := snap.SymTab[direct]; s != nil {
 		return s
 	}
-	// Case-insensitive match on this type (getCInquiryCode <-> cInquiryCode).
-	for _, s := range snap.SymTab {
-		if s.Kind == "field" && s.OwnerKey == typeKey && strings.EqualFold(s.Name, name) {
+	// Case-insensitive match only among this type's fields (FieldIdx).
+	for _, fk := range snap.FieldIdx[typeKey] {
+		if s := snap.SymTab[fk]; s != nil && strings.EqualFold(s.Name, name) {
 			return s
 		}
 	}

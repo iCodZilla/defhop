@@ -4,7 +4,8 @@ Java navigation fixtures used by `scripts/smoke-test-samples.js`.
 
 Covers:
 
-- **lang** — classes, interfaces, generics, overloads, enums, lambda, method references
+- **lang** — classes, interfaces, generics, overloads, enums, records, lambda, method references
+- **deps** — F12 into `.defhop-deps/*-sources.jar`
 - **spring** — `@Service` / `@RestController` / `@Value` / `@ConfigurationProperties`
 - **cloud** — Spring Cloud OpenFeign ↔ Controller
 - **mybatis** — Mapper ↔ XML

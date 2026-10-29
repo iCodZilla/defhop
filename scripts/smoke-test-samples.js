@@ -112,6 +112,26 @@ function run() {
       return out.locations || [];
     }
 
+    /** Retry DEF until pred matches (deps index runs after INIT returns). */
+    async function waitDef(relParts, needle, linePred, locPred, msg, attempts = 40) {
+      const file = j(...relParts);
+      const text = fs.readFileSync(file, "utf8");
+      const pos = findPos(text, needle, linePred);
+      let last = [];
+      for (let i = 0; i < attempts; i++) {
+        const out = await req("DEF", [file, text, String(pos.line), String(pos.col)]);
+        last = out.locations || [];
+        if (last.some(locPred)) {
+          console.log(`DEF ${needle} @ ${relParts.join("/")} ->`, locStr(last));
+          return last;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      console.log(`DEF ${needle} @ ${relParts.join("/")} ->`, locStr(last));
+      assertSome(last, locPred, msg);
+      return last;
+    }
+
     async function refsFile(relParts, needle, pred) {
       const file = j(...relParts);
       const text = fs.readFileSync(file, "utf8");
@@ -183,6 +203,21 @@ function run() {
 
       locs = await defFile(["samples", "lang", "LangDemo.java"], "Status.ACTIVE");
       assertSome(locs, (l) => (l.path || "").includes("Status.java"), "DEF Status.ACTIVE");
+
+      locs = await defFile(["samples", "lang", "LangDemo.java"], "Point", (l) =>
+        l.includes("new Point"),
+      );
+      assertSome(locs, (l) => (l.path || "").includes("Point.java"), "DEF record Point");
+      locs = await defFile(["samples", "lang", "LangDemo.java"], "x()", (l) => l.includes("pt.x"));
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Point.java"),
+        "DEF record accessor pt.x()",
+      );
+      locs = await defFile(["samples", "lang", "LangDemo.java"], "sum()", (l) =>
+        l.includes("pt.sum"),
+      );
+      assertSome(locs, (l) => (l.path || "").includes("Point.java"), "DEF record body pt.sum()");
 
       // ---- Lambda / method references ----
       locs = await defFile(["samples", "lang", "LambdaPlayground.java"], "getId", (l) =>
@@ -337,6 +372,14 @@ function run() {
         (l) => (l.path || "").includes("Customer.java"),
         "DEF Lombok Customer::getName",
       );
+      locs = await defFile(["samples", "lombokdemo", "CustomerService.java"], "builder", (l) =>
+        l.includes("Customer.builder"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Customer.java"),
+        "DEF Lombok Customer.builder()",
+      );
 
       // ---- MapStruct ----
       locs = await defFile(["samples", "mapstructdemo", "CustomerMapStruct.java"], "toDto");
@@ -360,6 +403,23 @@ function run() {
         propDef.locations || [],
         (l) => (l.path || "").includes("CustomerDto.java"),
         "@Mapping target -> CustomerDto.displayName",
+      );
+
+      // ---- Dependency sources (.defhop-deps/*-sources.jar; indexed async) ----
+      locs = await waitDef(
+        ["samples", "deps", "DepsUse.java"],
+        "LibDemo",
+        (l) => l.includes("new LibDemo"),
+        (l) => (l.path || "").includes("LibDemo.java"),
+        "DEF LibDemo -> dependency sources jar",
+      );
+      locs = await defFile(["samples", "deps", "DepsUse.java"], "hello(", (l) =>
+        l.includes("demo.hello"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("LibDemo.java"),
+        "DEF demo.hello -> LibDemo.hello in sources.jar",
       );
 
       const warm = await req("REINDEX", [

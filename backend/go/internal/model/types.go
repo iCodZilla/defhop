@@ -25,6 +25,7 @@ type Symbol struct {
 	ExtendsArgs   []string // qualified type args of extends, e.g. ServiceImpl<M,T> -> [M,T]
 	InterfaceType bool
 	TypeKey       string // fields
+	ElemType      string // fields/methods: first type-arg of List<T>/Optional<T>/...
 	ReturnType    string // methods
 	Imports       []string
 	ConfigKeys    []string // @Value placeholders / @ConfigurationProperties keys
@@ -49,6 +50,8 @@ type Occ struct {
 	MemberRef     bool
 	RecvCallName  string
 	RecvCallOwner string
+	TypeKey       string // locals/params: declared type (T|...); used for chain resolve
+	ElemType      string // locals/params: List<T>/Optional<T> element type
 }
 
 // FileSlice is the indexed view of one source file.

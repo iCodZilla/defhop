@@ -2,7 +2,7 @@
   "name": "defhop",
   "displayName": "Defhop for Java",
   "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "vg0x00",
   "license": "MIT",
   "repository": {
@@ -52,8 +52,11 @@
     "onLanguage:xml",
     "onLanguage:yaml",
     "onLanguage:properties",
-    "onCommand:defhop.reindex",
+    "onCommand:defhop.refreshIndex",
+    "onCommand:defhop.rebuildIndex",
     "onCommand:defhop.status",
+    "onCommand:defhop.configureJdk",
+    "onCommand:defhop.clearJdkHome",
     "onCommand:defhop.goDefinition",
     "onCommand:defhop.goMyBatisSql",
     "onCommand:defhop.goJavaDeclaration"
@@ -62,12 +65,24 @@
   "contributes": {
     "commands": [
       {
-        "command": "defhop.reindex",
-        "title": "Defhop: Reindex Workspace"
+        "command": "defhop.refreshIndex",
+        "title": "Defhop: Refresh Index (keep cache)"
+      },
+      {
+        "command": "defhop.rebuildIndex",
+        "title": "Defhop: Clear Cache and Rebuild"
       },
       {
         "command": "defhop.status",
         "title": "Defhop: Show Output"
+      },
+      {
+        "command": "defhop.configureJdk",
+        "title": "Defhop: Configure JDK Home"
+      },
+      {
+        "command": "defhop.clearJdkHome",
+        "title": "Defhop: Clear Project JDK Home"
       },
       {
         "command": "defhop.goDefinition",
@@ -123,6 +138,11 @@
             "logs"
           ],
           "description": "Directories skipped during the initial source scan."
+        },
+        "defhop.jdkHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "JDK home directory (or path to `src.zip`) for `java.*` navigation. Priority: **workspace** → **user** setting → `JAVA_HOME`/`JDK_HOME` → auto-detect. Env/auto results are written into the workspace setting so you usually do not need to set this by hand."
         }
       }
     }

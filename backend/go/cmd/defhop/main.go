@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"defhop/internal/deps"
 	"defhop/internal/hub"
 	"defhop/internal/model"
 	"defhop/internal/plugins/feign"
@@ -56,6 +57,7 @@ func main() {
 		}
 		if cmd == "SHUTDOWN" {
 			h.FlushCachePersist()
+			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true}`+"\n", quote(id))
 			break
 		}
 
@@ -71,7 +73,7 @@ func main() {
 
 func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 	switch cmd {
-	case "INIT", "REINDEX":
+	case "INIT", "REINDEX", "REBUILD":
 		if len(args) < 1 || args[0] == "" {
 			return "", fmt.Errorf("workspace root required")
 		}
@@ -85,13 +87,36 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		} else {
 			cacheDir = filepath.Join(root, ".defhop-cache")
 		}
-		files, syms, refs, ms, plugins, err := h.Init(context.Background(), root, cacheDir)
+		roots := []string{root}
+		if len(args) >= 6 && args[5] != "" {
+			for _, extra := range strings.Split(args[5], "\n") {
+				extra = strings.TrimSpace(extra)
+				if extra != "" && !strings.EqualFold(filepath.Clean(extra), filepath.Clean(root)) {
+					roots = append(roots, extra)
+				}
+			}
+		}
+		if len(args) >= 7 {
+			deps.SetJDKHome(args[6])
+			h.ClearExternalLocateCache()
+		}
+		var (
+			files, syms, refs int
+			ms                int64
+			plugins           []string
+			err               error
+		)
+		if cmd == "REBUILD" {
+			files, syms, refs, ms, plugins, err = h.RebuildRoots(context.Background(), roots, cacheDir)
+		} else {
+			files, syms, refs, ms, plugins, err = h.InitRoots(context.Background(), roots, cacheDir)
+		}
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(
-			`,"files":%d,"symbols":%d,"references":%d,"milliseconds":%d,"backendVersion":%s,"plugins":%s`,
-			files, syms, refs, ms, quote(backendVersion), quoteList(plugins),
+			`,"files":%d,"symbols":%d,"references":%d,"milliseconds":%d,"backendVersion":%s,"plugins":%s,"roots":%d`,
+			files, syms, refs, ms, quote(backendVersion), quoteList(plugins), len(roots),
 		), nil
 
 	case "UPDATE":
@@ -100,6 +125,33 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		}
 		gen := h.UpdateBuffer(args[0], args[1])
 		return fmt.Sprintf(`,"gen":%d`, gen), nil
+
+	case "INDEX":
+		// Incremental index of disk files (create) — avoids full REINDEX.
+		n := 0
+		for _, p := range args {
+			if p != "" && h.IndexDiskFile(p) {
+				n++
+			}
+		}
+		return fmt.Sprintf(`,"indexed":%d`, n), nil
+
+	case "REMOVE":
+		// Drop paths from overlay + index (delete) — avoids full REINDEX.
+		for _, p := range args {
+			if p != "" {
+				h.RemovePath(p)
+			}
+		}
+		return `,"removed":true`, nil
+
+	case "DROPOVERLAY":
+		for _, p := range args {
+			if p != "" {
+				h.DropOverlay(p)
+			}
+		}
+		return "", nil
 
 	case "STATUS":
 		files, syms, refs, plugins, prog := h.Status()
@@ -129,6 +181,64 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 			out += `,"navMenu":` + quote(navMenu)
 		}
 		return out, nil
+
+	case "OUTLINE":
+		if len(args) < 1 || args[0] == "" {
+			return `,"symbols":[]`, nil
+		}
+		items := h.Outline(args[0])
+		b, err := json.Marshal(items)
+		if err != nil {
+			return `,"symbols":[]`, nil
+		}
+		return `,"symbols":` + string(b), nil
+
+	case "HIERARCHY":
+		if len(args) < 3 {
+			return `,"item":null,"supers":[],"subtypes":[]`, nil
+		}
+		item, supers, subtypes := h.TypeHierarchy(args[0], atoi(args[1]), atoi(args[2]))
+		ib, _ := json.Marshal(item)
+		sb, _ := json.Marshal(supers)
+		tb, _ := json.Marshal(subtypes)
+		return fmt.Sprintf(`,"item":%s,"supers":%s,"subtypes":%s`, string(ib), string(sb), string(tb)), nil
+
+	case "HOVER":
+		if len(args) < 3 {
+			return `,"hover":null`, nil
+		}
+		info := h.Hover(args[0], atoi(args[1]), atoi(args[2]))
+		b, _ := json.Marshal(info)
+		return `,"hover":` + string(b), nil
+
+	case "CALLS":
+		if len(args) < 3 {
+			return `,"item":null,"incoming":[],"outgoing":[]`, nil
+		}
+		item, incoming, outgoing := h.CallHierarchy(args[0], atoi(args[1]), atoi(args[2]))
+		ib, _ := json.Marshal(item)
+		nb, _ := json.Marshal(incoming)
+		ob, _ := json.Marshal(outgoing)
+		return fmt.Sprintf(`,"item":%s,"incoming":%s,"outgoing":%s`, string(ib), string(nb), string(ob)), nil
+
+	case "SYMBOLS":
+		query := ""
+		if len(args) >= 1 {
+			query = args[0]
+		}
+		limit := 100
+		if len(args) >= 2 && args[1] != "" {
+			limit = atoi(args[1])
+			if limit <= 0 {
+				limit = 100
+			}
+		}
+		items := h.WorkspaceSymbols(query, limit)
+		b, err := json.Marshal(items)
+		if err != nil {
+			return `,"symbols":[]`, nil
+		}
+		return `,"symbols":` + string(b), nil
 
 	default:
 		return "", fmt.Errorf("unknown command: %s", cmd)

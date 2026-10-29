@@ -9,11 +9,18 @@ type Entry struct {
 	Gen  uint64
 }
 
-// Snapshot is a copy of one overlay entry for safe iteration.
+// Snapshot is a copy of one overlay entry for safe iteration (includes Text).
 type Snapshot struct {
 	Key  string
 	Path string
 	Text string
+	Gen  uint64
+}
+
+// Meta is overlay identity without copying buffer text.
+type Meta struct {
+	Key  string
+	Path string
 	Gen  uint64
 }
 
@@ -65,7 +72,18 @@ func (s *Store) Gen(pathKey string) uint64 {
 	return 0
 }
 
-// All returns a snapshot of every overlay entry.
+// AllMeta lists overlay entries without copying Text (cheap for stale flush).
+func (s *Store) AllMeta() []Meta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Meta, 0, len(s.data))
+	for k, e := range s.data {
+		out = append(out, Meta{Key: k, Path: e.Path, Gen: e.Gen})
+	}
+	return out
+}
+
+// All returns a snapshot of every overlay entry (includes Text — prefer AllMeta).
 func (s *Store) All() []Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
