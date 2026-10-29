@@ -1,0 +1,12 @@
+﻿---
+description: Push/pull this repo only via SSH (not HTTPS)
+alwaysApply: true
+---
+
+# Git remote: SSH only
+
+- `origin` must stay `git@github.com:iCodZilla/defhop.git` (SSH).
+- Never switch push/fetch URL back to `https://github.com/...` — HTTPS :443 to GitHub often fails on this machine.
+- When the user asks to push/pull/create PR remote sync: use `git push` / `git pull` with the existing SSH remote; do not rewrite to HTTPS.
+- If SSH auth fails: remind to check `~/.ssh/config` Host `github.com` and that the public key is on GitHub (deploy key or account SSH key).
+- Do not change global git config unless the user explicitly asks.
