@@ -5,7 +5,9 @@
  *
  * Instant navigation:
  * - Buffer changes are flushed to the backend IMMEDIATELY (no debounce).
- * - Backend keeps an overlay; DEF uses sync parse when overlay is ahead of index.
+ * - Backend keeps an overlay; nav sync-publishes all stale overlays (cross-file edits).
+ * - Before DEF/REFS, open buffers are awaited so the index sees the latest text.
+ * - Broken / incomplete Java still updates the index (tolerant parse).
  * - Navigation unlocks as soon as Java core index is ready (navReady), before plugins finish.
  * - Status bar shows overall %; stops spinning at 100%.
  */
@@ -401,20 +403,42 @@ class DefhopClient {
   }
 
   /**
-   * Push buffer to overlay. Backend returns after storing overlay (parse is async),
-   * so this must not block navigation.
+   * Push buffer to overlay (fire-and-forget). Backend stores overlay then parses async;
+   * Navigate also sync-publishes stale overlays for cross-file freshness.
    */
   pushBuffer(document) {
-    if (!this._ready || document.uri.scheme !== "file") return;
-    if (!isConfigLike(document)) return;
+    const p = this.pushBufferAwait(document);
+    if (p) {
+      p.catch((error) => {
+        this.output.appendLine(`[update] ${error.message}`);
+      });
+    }
+  }
+
+  /** Await overlay store for one document. Returns null when skipped. */
+  pushBufferAwait(document) {
+    if (!this._ready || !document || document.uri.scheme !== "file") return null;
+    if (!isConfigLike(document)) return null;
     const file = document.uri.fsPath;
     const ver = document.version;
-    if (this._syncedVersion.get(file) === ver) return;
+    if (this._syncedVersion.get(file) === ver) return Promise.resolve();
     this._syncedVersion.set(file, ver);
-    this._doRequest("UPDATE", [file, document.getText()], 15000).catch((error) => {
+    return this._doRequest("UPDATE", [file, document.getText()], 15000).catch((error) => {
       this._syncedVersion.delete(file);
-      this.output.appendLine(`[update] ${error.message}`);
+      throw error;
     });
+  }
+
+  /** Push every open config-like buffer; await so DEF sees cross-file edits. */
+  async syncOpenBuffers() {
+    if (!this._ready) return;
+    const pending = [];
+    for (const doc of vscode.workspace.textDocuments) {
+      const p = this.pushBufferAwait(doc);
+      if (p) pending.push(p);
+    }
+    if (pending.length === 0) return;
+    await Promise.allSettled(pending);
   }
 
   _doRequest(command, args, timeoutMs = 60000) {
@@ -541,11 +565,17 @@ class DefhopClient {
 
   async navQuery(command, document, position, timeoutMs = 3000, includeDeclaration = false) {
     if (!this._ready) return { locations: [] };
-    this.pushBuffer(document);
+    // Ensure defining files open in other tabs are in the overlay before DEF/REFS.
+    try {
+      await this.syncOpenBuffers();
+    } catch (error) {
+      this.output.appendLine(`[nav] sync ${error.message}`);
+    }
     const args = [document.uri.fsPath, "", position.line, position.character];
     if (command === "REFS") args.push(includeDeclaration ? "true" : "false");
     try {
-      const message = await this._doRequest(command, args, timeoutMs);
+      // Slightly longer budget: may sync-parse a few stale overlays first.
+      const message = await this._doRequest(command, args, Math.max(timeoutMs, 5000));
       return {
         locations: this._toLocations(message.locations),
         raw: message.locations || [],
@@ -683,6 +713,7 @@ async function activate(context) {
         java: { pct: 0, done: 0, total: 0, state: "pending" },
       });
       const result = await client._doRequest("REINDEX", client.reindexArguments(), 300000);
+      await client.syncOpenBuffers();
       client._applyProgress({
         ...(client._progress || emptyProgress()),
         pct: 100,
@@ -730,12 +761,18 @@ async function activate(context) {
     }),
     vscode.workspace.onDidCreateFiles((event) => {
       if (event.files.some(isIndexedFile)) {
-        client._doRequest("REINDEX", client.reindexArguments(), 300000).catch(() => {});
+        client
+          ._doRequest("REINDEX", client.reindexArguments(), 300000)
+          .then(() => client.syncOpenBuffers())
+          .catch(() => {});
       }
     }),
     vscode.workspace.onDidDeleteFiles((event) => {
       if (event.files.some(isIndexedFile)) {
-        client._doRequest("REINDEX", client.reindexArguments(), 300000).catch(() => {});
+        client
+          ._doRequest("REINDEX", client.reindexArguments(), 300000)
+          .then(() => client.syncOpenBuffers())
+          .catch(() => {});
       }
     }),
   );

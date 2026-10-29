@@ -138,7 +138,6 @@ func (r *parseResult) scanRefs(p, source string, excl []iv, vnt map[string]strin
 
 		qk, qn := "", ""
 		isMember := false
-		isMethodRef := false // Type::method / expr::method
 		rcName, rcOwner := "", ""
 		j := a - 1
 		for j >= 0 && isWS(source[j]) {
@@ -147,7 +146,6 @@ func (r *parseResult) scanRefs(p, source string, excl []iv, vnt map[string]strin
 		// Member access via '.' or method reference via '::'
 		if j >= 1 && source[j] == ':' && source[j-1] == ':' && !inExcl(j) {
 			isMember = true
-			isMethodRef = true
 			j -= 2
 			for j >= 0 && isWS(source[j]) {
 				j--
@@ -239,8 +237,8 @@ func (r *parseResult) scanRefs(p, source string, excl []iv, vnt map[string]strin
 					qk = r.innermostType(a)
 				} else if t, ok := vnt[base]; ok {
 					qk = t
-				} else if isMethodRef && len(base) > 0 && base[0] >= 'A' && base[0] <= 'Z' {
-					// PricingProposal::getX — qualifier is a type name
+				} else if len(base) > 0 && base[0] >= 'A' && base[0] <= 'Z' {
+					// Type.member / Type::member (Result.success, Foo::bar)
 					qk = "T|" + ql(base, r.Package, r.imports)
 				}
 			}

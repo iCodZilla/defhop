@@ -90,22 +90,23 @@ func Resolve(snap *store.Snapshot, fd *model.FileSlice, offset int, token, sourc
 	}
 
 	if occ.QualifierKey != "" {
-		q := snap.ResolveTypeKey(occ.QualifierKey, fd)
-		if res := resolveMemberOn(snap, q, occ.Name); res != nil {
+		if res := resolveMemberViaTypeKey(snap, fd, occ.QualifierKey, occ.Name); res != nil {
 			return res, res.Key
 		}
 	}
 
-	if occ.MemberRef && occ.QualifierKey == "" && occ.OwnerTypeKey != "" && occ.QualifierName != "" {
-		if f := snap.FindField(occ.OwnerTypeKey, occ.QualifierName); f != nil && f.TypeKey != "" {
-			if res := resolveMemberOn(snap, f.TypeKey, occ.Name); res != nil {
-				return res, res.Key
+	if occ.MemberRef && occ.QualifierName != "" {
+		// Instance field first: this.foo.bar / local.foo where QualifierName is the field.
+		if occ.OwnerTypeKey != "" {
+			if f := snap.FindField(occ.OwnerTypeKey, occ.QualifierName); f != nil && f.TypeKey != "" {
+				if res := resolveMemberOn(snap, f.TypeKey, occ.Name); res != nil {
+					return res, res.Key
+				}
 			}
 		}
-		if q := snap.ResolveTypeKey("T|"+occ.QualifierName, fd); snap.SymTab[q] != nil {
-			if res := resolveMemberOn(snap, q, occ.Name); res != nil {
-				return res, res.Key
-			}
+		// Type.member — Result.success / com.x.Result.success (qn is simple "Result").
+		if res := resolveMemberViaTypeName(snap, fd, occ.QualifierName, occ.Name); res != nil {
+			return res, res.Key
 		}
 	}
 
@@ -222,6 +223,52 @@ func resolveMemberOn(snap *store.Snapshot, typeKey, name string) *model.Symbol {
 		return f
 	}
 	return snap.FindMethodInHierarchy(typeKey, name)
+}
+
+// resolveMemberViaTypeKey resolves Owner.member after normalizing type keys / imports.
+func resolveMemberViaTypeKey(snap *store.Snapshot, fd *model.FileSlice, typeKey, name string) *model.Symbol {
+	if typeKey == "" || name == "" {
+		return nil
+	}
+	q := snap.ResolveTypeKey(typeKey, fd)
+	if res := resolveMemberOn(snap, q, name); res != nil {
+		return res
+	}
+	// Ambiguous simple key (T|Result) — try every indexed type with that simple name.
+	simple := typeKey
+	if i := strings.LastIndex(simple, "|"); i >= 0 {
+		simple = simple[i+1:]
+	}
+	if i := strings.LastIndexAny(simple, ".$"); i >= 0 {
+		simple = simple[i+1:]
+	}
+	return resolveMemberViaTypeName(snap, fd, simple, name)
+}
+
+// resolveMemberViaTypeName finds Type.member when imports are missing or Result is ambiguous.
+// Prefers the imported / uniquely resolved type; else the only candidate that owns the member.
+func resolveMemberViaTypeName(snap *store.Snapshot, fd *model.FileSlice, typeName, member string) *model.Symbol {
+	if typeName == "" || member == "" || snap == nil {
+		return nil
+	}
+	q := snap.ResolveTypeKey("T|"+typeName, fd)
+	if snap.SymTab[q] != nil {
+		if res := resolveMemberOn(snap, q, member); res != nil {
+			return res
+		}
+	}
+	seen := map[string]bool{}
+	var hits []*model.Symbol
+	for _, cand := range snap.Simple[typeName] {
+		if res := resolveMemberOn(snap, cand, member); res != nil && !seen[res.Key] {
+			seen[res.Key] = true
+			hits = append(hits, res)
+		}
+	}
+	if len(hits) == 1 {
+		return hits[0]
+	}
+	return nil
 }
 
 // AccessorProp maps getX/setX/isX to the primary property name.

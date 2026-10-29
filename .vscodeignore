@@ -12,6 +12,7 @@ build.ps1
 BUILD.md
 **/*.md
 !README.md
+!CHANGELOG.md
 media/defhop-icon.jpg
 media/icon-with-bg-backup.png
 media/*.psd

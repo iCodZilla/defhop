@@ -602,10 +602,16 @@ func parseSafe(path, text string, gen uint64) (fd *model.FileSlice) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "[index] panic parsing %s: %v\n", path, r)
-			fd = nil
+			// Keep indexing resilient: publish an empty slice at this gen so
+			// overlay/index gens stay aligned and bad syntax cannot stall updates.
+			fd = &model.FileSlice{Path: filepath.ToSlash(path), Gen: gen}
 		}
 	}()
-	return java.Parse(path, text, gen)
+	fd = java.Parse(path, text, gen)
+	if fd == nil {
+		fd = &model.FileSlice{Path: filepath.ToSlash(path), Gen: gen}
+	}
+	return fd
 }
 
 func (h *Hub) indexPluginsParallel(ctx context.Context, plugs []plugin.Plugin, facts *model.WorkspaceFacts) {
@@ -631,16 +637,22 @@ func (h *Hub) indexPluginsParallel(ctx context.Context, plugs []plugin.Plugin, f
 }
 
 // UpdateBuffer stores the overlay immediately (returns at once) and reindexes
-// the file in the background. Navigation never waits on this parse.
+// the file in the background. Navigate also sync-publishes stale overlays so
+// cross-file jumps see edits without waiting on this async path.
 func (h *Hub) UpdateBuffer(path, text string) uint64 {
 	key := store.PathKey(path)
-	gen := h.Overlay.Put(key, text)
+	gen := h.Overlay.Put(key, path, text)
 	go h.indexBufferAsync(path, key, text, gen)
 	return gen
 }
 
 func (h *Hub) indexBufferAsync(path, key, text string, gen uint64) {
-	// Drop superseded buffers ? only the latest gen is published.
+	h.indexOneBuffer(path, key, text, gen)
+}
+
+// indexOneBuffer publishes one overlay generation into the symbol index.
+// Tolerant of broken Java: parseSafe always returns a FileSlice.
+func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 	if h.Overlay.Gen(key) != gen {
 		return
 	}
@@ -648,14 +660,16 @@ func (h *Hub) indexBufferAsync(path, key, text string, gen uint64) {
 	ev := plugin.ChangeEvent{PathKey: key, Path: path, Text: text}
 	if strings.HasSuffix(lower, ".java") {
 		fd := parseSafe(path, text, gen)
-		if fd == nil {
-			return
-		}
 		if h.Overlay.Gen(key) != gen {
 			return
 		}
 		h.mu.Lock()
 		if h.Overlay.Gen(key) != gen {
+			h.mu.Unlock()
+			return
+		}
+		cur := h.Index.Snapshot().File(key)
+		if cur != nil && cur.Gen >= gen {
 			h.mu.Unlock()
 			return
 		}
@@ -678,6 +692,45 @@ func (h *Hub) indexBufferAsync(path, key, text string, gen uint64) {
 	}
 }
 
+const maxSyncOverlayFlush = 64
+
+// publishStaleOverlays sync-indexes overlay buffers whose gen is ahead of the
+// published FileSlice. Needed so DEF on Caller.java can see a new method just
+// typed in Result.java before the async UPDATE worker finishes.
+func (h *Hub) publishStaleOverlays(preferPath string) {
+	entries := h.Overlay.All()
+	if len(entries) == 0 {
+		return
+	}
+	preferKey := store.PathKey(preferPath)
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Key == preferKey {
+			return true
+		}
+		if entries[j].Key == preferKey {
+			return false
+		}
+		return entries[i].Gen > entries[j].Gen
+	})
+	snap := h.Index.Snapshot()
+	n := 0
+	for _, e := range entries {
+		if e.Path == "" || !strings.HasSuffix(strings.ToLower(e.Path), ".java") {
+			continue
+		}
+		fd := snap.File(e.Key)
+		if fd != nil && fd.Gen >= e.Gen {
+			continue
+		}
+		h.indexOneBuffer(e.Path, e.Key, e.Text, e.Gen)
+		n++
+		if n >= maxSyncOverlayFlush {
+			break
+		}
+		snap = h.Index.Snapshot()
+	}
+}
+
 // fileText returns overlay text if present, else disk, else req text.
 func (h *Hub) fileText(path, fallback string) (text string, gen uint64) {
 	key := store.PathKey(path)
@@ -697,6 +750,10 @@ func (h *Hub) fileText(path, fallback string) (text string, gen uint64) {
 // Navigate answers DEF/REFS/IMPL/ROUTE.
 // navMenu is reserved for optional UI hints (currently unused).
 func (h *Hub) Navigate(req model.NavRequest) (locs []*model.Location, navMenu string) {
+	// Publish edits from every open/dirty overlay first so cross-file symbols
+	// (e.g. Result.success added moments ago) are visible immediately.
+	h.publishStaleOverlays(req.Path)
+
 	key := store.PathKey(req.Path)
 	text, gen := h.fileText(req.Path, req.Text)
 	if text == "" {
@@ -711,23 +768,9 @@ func (h *Hub) Navigate(req model.NavRequest) (locs []*model.Location, navMenu st
 	needFresh := strings.HasSuffix(strings.ToLower(req.Path), ".java") &&
 		(fd == nil || (gen > 0 && fd.Gen < gen))
 	if needFresh {
-		fresh := parseSafe(req.Path, text, gen)
-		if fresh != nil {
-			h.mu.Lock()
-			// Another request may have published the same/newer gen already.
-			cur := h.Index.Snapshot().File(key)
-			if cur == nil || cur.Gen < gen {
-				old := h.Index.PutFile(fresh)
-				for _, p := range h.Plugins.Active() {
-					p.OnFileChanged(plugin.ChangeEvent{
-						PathKey: key, Path: req.Path, Text: text, Old: old, New: fresh,
-					})
-				}
-			}
-			h.mu.Unlock()
-			snap = h.Index.Snapshot()
-			fd = snap.File(key)
-		}
+		h.indexOneBuffer(req.Path, key, text, gen)
+		snap = h.Index.Snapshot()
+		fd = snap.File(key)
 	}
 
 	lower := strings.ToLower(req.Path)

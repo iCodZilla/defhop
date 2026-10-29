@@ -5,6 +5,15 @@ import "sync"
 // Entry is the latest editor buffer for a path.
 type Entry struct {
 	Text string
+	Path string // original filesystem path (for parse / plugins)
+	Gen  uint64
+}
+
+// Snapshot is a copy of one overlay entry for safe iteration.
+type Snapshot struct {
+	Key  string
+	Path string
+	Text string
 	Gen  uint64
 }
 
@@ -19,7 +28,7 @@ func New() *Store {
 }
 
 // Put replaces the buffer and bumps generation. Returns the new gen.
-func (s *Store) Put(pathKey, text string) uint64 {
+func (s *Store) Put(pathKey, path, text string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e := s.data[pathKey]
@@ -28,6 +37,9 @@ func (s *Store) Put(pathKey, text string) uint64 {
 		s.data[pathKey] = e
 	}
 	e.Text = text
+	if path != "" {
+		e.Path = path
+	}
 	e.Gen++
 	return e.Gen
 }
@@ -51,6 +63,17 @@ func (s *Store) Gen(pathKey string) uint64 {
 		return e.Gen
 	}
 	return 0
+}
+
+// All returns a snapshot of every overlay entry.
+func (s *Store) All() []Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Snapshot, 0, len(s.data))
+	for k, e := range s.data {
+		out = append(out, Snapshot{Key: k, Path: e.Path, Text: e.Text, Gen: e.Gen})
+	}
+	return out
 }
 
 // Remove drops an overlay entry.
