@@ -13,7 +13,15 @@ Developer notes (not shown on the Marketplace). Product docs live in `README.md`
 .\build.ps1
 ```
 
-Produces `backend\defhop.exe` and runs:
+Cross-compiles backends into `backend\`:
+
+| File | Platform |
+|------|----------|
+| `defhop-win32-x64.exe` (+ alias `defhop.exe`) | Windows |
+| `defhop-linux-x64` / `defhop-linux-arm64` | Linux / WSL |
+| `defhop-darwin-x64` / `defhop-darwin-arm64` | macOS |
+
+Then runs:
 
 - `scripts\smoke-test.js` — classic `testdata/demo` fixtures  
 - `scripts\smoke-test-samples.js` — `testdata/samples` (Java lang + lambda, Spring, Spring Cloud OpenFeign, MyBatis, MyBatis-Plus, Lombok, MapStruct, dependency sources.jar)
@@ -30,8 +38,14 @@ Manual:
 
 ```powershell
 cd backend\go
+# local Windows only:
 go build -o ..\defhop.exe ./cmd/defhop
+# WSL / Linux example:
+$env:GOOS="linux"; $env:GOARCH="amd64"; $env:CGO_ENABLED="0"
+go build -o ..\defhop-linux-x64 ./cmd/defhop
 ```
+
+The extension picks `defhop-${platform}-${arch}` (never runs `.exe` on Linux/WSL) and `chmod +x` on Unix.
 
 ## Package VSIX
 
@@ -74,6 +88,6 @@ npx @vscode/vsce publish
 | `package.json` | Manifest / marketplace metadata |
 | `README.md` | Marketplace product page |
 | `backend/go` | Index + navigation engine |
-| `backend/defhop.exe` | Bundled binary |
+| `backend/defhop-*` | Bundled binaries (win/linux/darwin) |
 | `media/` | Icon, banner, donation QR |
 | `scripts/smoke-test.js` | Navigation smoke checks |

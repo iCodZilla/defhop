@@ -57,6 +57,33 @@ function fileExists(candidate) {
   }
 }
 
+/** Platform backend names (Node arch: x64/arm64). Never prefer .exe on Linux/macOS/WSL. */
+function backendBinaryCandidates(extensionPath) {
+  const dir = path.join(extensionPath, "backend");
+  const plat = process.platform;
+  const arch = process.arch;
+  const names = [];
+  if (plat === "win32") {
+    names.push(`defhop-win32-${arch}.exe`, "defhop.exe");
+  } else if (plat === "linux") {
+    names.push(`defhop-linux-${arch}`, "defhop");
+  } else if (plat === "darwin") {
+    names.push(`defhop-darwin-${arch}`, "defhop");
+  } else {
+    names.push("defhop");
+  }
+  return names.map((n) => path.join(dir, n));
+}
+
+function ensureUnixExecutable(filePath) {
+  if (process.platform === "win32" || !filePath) return;
+  try {
+    fs.chmodSync(filePath, 0o755);
+  } catch {
+    /* ignore — spawn will surface EACCES if still not runnable */
+  }
+}
+
 function isIndexedFile(uri) {
   if (!uri || uri.scheme !== "file") return false;
   const name = uri.fsPath.toLowerCase();
@@ -265,14 +292,16 @@ class DefhopClient {
       ...allRoots.filter((r) => path.resolve(r) !== path.resolve(preferred)),
     ];
 
-    const backendPaths = [
-      path.join(this.context.extensionPath, "backend", "defhop.exe"),
-      path.join(this.context.extensionPath, "backend", "defhop"),
-    ];
+    const backendPaths = backendBinaryCandidates(this.context.extensionPath);
     const backendPath = backendPaths.find((p) => fileExists(p));
     if (!backendPath) {
-      throw new Error("Defhop backend not found. Run build.ps1 first.");
+      throw new Error(
+        `Defhop backend not found for ${process.platform}-${process.arch}. ` +
+          `Expected one of: ${backendPaths.map((p) => path.basename(p)).join(", ")}. Run build.ps1.`,
+      );
     }
+    ensureUnixExecutable(backendPath);
+    this.output.appendLine(`[backend] ${backendPath}`);
 
     this._progress = emptyProgress();
     this._displayPct = 0;

@@ -4,6 +4,9 @@
 
 Performance, memory, and navigation UX (dev iterations consolidated into one release).
 
+### Fixed
+- **WSL / Linux startup** — no longer tries to spawn `defhop.exe` (EACCES); selects `defhop-linux-x64`/`arm64`, `chmod +x`, and packages cross-built backends.
+
 ### Improved
 - **Index commands** — `Refresh Index (keep cache)` replaces ambiguous Reindex; new `Clear Cache and Rebuild` wipes disk cache then cold-builds (`REBUILD`).
 - **Progress bar** — no longer sticks at 99% on the last plugin step; all plugins ready (or INIT done) snaps to 100% / checkmark.

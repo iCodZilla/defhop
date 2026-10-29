@@ -1,5 +1,8 @@
 backend/defhop
 backend/defhop.exe
+backend/defhop-win32-*
+backend/defhop-linux-*
+backend/defhop-darwin-*
 backend/javanav
 backend/javanav.exe
 **/.defhop-cache/
