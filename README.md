@@ -65,6 +65,8 @@ Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 
 导航相关（转到定义 / 查找引用等）。框架能力**按需启用**，项目没用到的不占资源。
 
+下列按**组件**列出；增删能力时须同步本表（中英）、`testdata/samples` 与 `scripts/smoke-test-samples.js`。
+
 ### Java
 
 - 类 / 接口 / 枚举、方法 / 构造 / 字段 → 定义
@@ -72,7 +74,8 @@ Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 - 查找引用、查找实现、同文件高亮（Document Highlight）
 - Lambda 局部变量、方法引用（`Type::method`）
 - Stream / Optional 链式跳转、包内跨文件类型
-- JDK / 依赖源码（`src.zip`、`*-sources.jar`）；无源码时从 `.jar` / `.class` 跳转公开 API
+- JDK / 依赖源码（`src.zip`、`*-sources.jar` / 工作区 `.defhop-deps`）；无源码时从 `.jar` / `.class` 跳转公开 API
+- Maven / Gradle 坐标发现（含 Gradle Version Catalog `libs.versions.toml`）
 - `record` 组件 / 访问器 / 方法体
 
 ### Spring
@@ -181,6 +184,8 @@ Engine binary ≈ **5.66 MB**. Medium repos ready in under a second; ~10k-file w
 
 Navigation only (Go to Definition / Find References, etc.). Framework support loads **on demand**.
 
+Listed **by component**; keep this list (EN + 中文), `testdata/samples`, and `scripts/smoke-test-samples.js` in sync when capabilities change.
+
 ### Java
 
 - Class / interface / enum, method / ctor / field → definition
@@ -188,7 +193,8 @@ Navigation only (Go to Definition / Find References, etc.). Framework support lo
 - Find references, implementations, document highlight
 - Locals in lambdas, method references (`Type::method`)
 - Stream / Optional chains, cross-file types in the package
-- JDK / dependency sources (`src.zip`, `*-sources.jar`); public API from `.jar` / `.class` when sources are missing
+- JDK / dependency sources (`src.zip`, `*-sources.jar` / workspace `.defhop-deps`); public API from `.jar` / `.class` when sources are missing
+- Maven / Gradle coordinate discovery (incl. Gradle Version Catalog `libs.versions.toml`)
 - `record` components / accessors / body methods
 
 ### Spring

@@ -2,7 +2,7 @@
 
 Java navigation fixtures used by `scripts/smoke-test-samples.js`.
 
-**Policy:** every user-facing nav feature must have a sample here **and** a smoke assertion. Keep this table, the fixtures, `scripts/smoke-test-samples.js`, and root `README.md` capabilities in sync (see `.cursor/rules/feature-samples-smoke.mdc`).
+**Policy:** every user-facing nav feature must update **root `README.md` 支持能力（按组件）**、本表/示例、`scripts/smoke-test-samples.js` 三处（见 `.cursor/rules/feature-samples-smoke.mdc`）。
 
 Covers:
 
