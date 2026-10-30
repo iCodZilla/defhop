@@ -249,7 +249,8 @@ class DefhopClient {
     this._starting = false;
     this._startPromise = undefined;
     this.root = undefined;
-    this._cacheDir = path.join(context.globalStorageUri.fsPath, "index-cache");
+    // Set in _doStart to <workspace>/.defhop (project-local cache).
+    this._cacheDir = undefined;
     this._stderrBuffer = "";
     this._syncedVersion = new Map(); // fsPath -> document.version last sent to overlay
     this._syncedHash = new Map(); // fsPath -> content fingerprint last sent
@@ -291,6 +292,14 @@ class DefhopClient {
       preferred,
       ...allRoots.filter((r) => path.resolve(r) !== path.resolve(preferred)),
     ];
+    // Index + deps cache lives in the project (not Cursor globalStorage on C:).
+    this._cacheDir = path.join(preferred, ".defhop");
+    try {
+      fs.mkdirSync(this._cacheDir, { recursive: true });
+    } catch (error) {
+      this.output.appendLine(`[cache] mkdir ${this._cacheDir}: ${error.message || error}`);
+    }
+    this.output.appendLine(`[cache] ${this._cacheDir}`);
 
     const backendPaths = backendBinaryCandidates(this.context.extensionPath);
     const backendPath = backendPaths.find((p) => fileExists(p));

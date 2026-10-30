@@ -134,8 +134,10 @@
           "default": [
             ".git",
             ".idea",
+            ".defhop",
             "node_modules",
-            "logs"
+            "logs",
+            "target"
           ],
           "description": "Directories skipped during the initial source scan."
         },

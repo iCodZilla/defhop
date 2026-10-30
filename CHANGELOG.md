@@ -6,6 +6,7 @@ Performance, memory, and navigation UX (dev iterations consolidated into one rel
 
 ### Fixed
 - **WSL / Linux startup** — no longer tries to spawn `defhop.exe` (EACCES); selects `defhop-linux-x64`/`arm64`, `chmod +x`, and packages cross-built backends.
+- **Project-local cache** — index/deps cache is `<workspace>/.defhop/` (gitignored), not Cursor `globalStorage` on the system drive.
 
 ### Improved
 - **Index commands** — `Refresh Index (keep cache)` replaces ambiguous Reindex; new `Clear Cache and Rebuild` wipes disk cache then cold-builds (`REBUILD`).

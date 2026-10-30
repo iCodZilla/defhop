@@ -85,7 +85,7 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		if len(args) >= 5 && args[4] != "" {
 			cacheDir = args[4]
 		} else {
-			cacheDir = filepath.Join(root, ".defhop-cache")
+			cacheDir = filepath.Join(root, ".defhop")
 		}
 		roots := []string{root}
 		if len(args) >= 6 && args[5] != "" {

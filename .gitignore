@@ -5,6 +5,7 @@ backend/defhop-linux-*
 backend/defhop-darwin-*
 backend/javanav
 backend/javanav.exe
+**/.defhop/
 **/.defhop-cache/
 **/.javanav-cache/
 **/.cache*/
