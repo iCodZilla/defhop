@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.9] - 2026-10-30
+
+### Fixed
+- **IntelliJ-style live index** — before DEF/REFS, commit **all** dirty overlays (no 24-file cap) and all open buffers; bulk AI/paste uses sync `UPDATE`; disk writes sync-INDEX. Modeled on Platform “commit documents / lazy update on first index access”.
+- **AI / disk writes → instant nav** — file watchers coalesce (~16ms) then **sync** incremental INDEX; F12 drains the queue first. Backend `IndexDiskFile` publishes into the symbol index before INDEX returns (no async gap).
+- **Status bar Defhop badge** — only right-corner `$(sync~spin) Defhop` / `$(check) Defhop`; removed left-side step text (缓存 / Spring / …).
+- **External / AI file writes** — watch `*.java` / xml / yml / properties on disk and INDEX/REMOVE (plus rename). Previously only open-buffer UPDATE and `onDidCreateFiles` ran.
+
 ## [1.0.8] - 2026-10-30
 
 ### Added

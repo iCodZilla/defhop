@@ -2,7 +2,7 @@
   "name": "defhop",
   "displayName": "Defhop for Java",
   "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "publisher": "vg0x00",
   "license": "MIT",
   "repository": {

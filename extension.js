@@ -5,6 +5,9 @@
  *
  * Instant navigation:
  * - Buffer changes are flushed to the backend IMMEDIATELY (no debounce).
+ * - Disk watchers sync-INDEX (~16ms coalesce) when AI/tools write outside the editor.
+ * - IntelliJ-like: bulk edits use sync UPDATE; F12 commits all open buffers + stale
+ *   overlays before resolve (lazy index on access). Status: 追平 vs ✓.
  * - Backend keeps an overlay; nav sync-publishes all stale overlays (cross-file edits).
  * - Before DEF/REFS, open buffers are awaited so the index sees the latest text.
  * - Broken / incomplete Java still updates the index (tolerant parse).
@@ -94,6 +97,60 @@ function isIndexedFile(uri) {
     name.endsWith(".yaml") ||
     name.endsWith(".properties")
   );
+}
+
+function pathsEqual(a, b) {
+  if (!a || !b) return false;
+  const na = path.normalize(a);
+  const nb = path.normalize(b);
+  return process.platform === "win32" ? na.toLowerCase() === nb.toLowerCase() : na === nb;
+}
+
+function openDocumentForPath(fsPath) {
+  for (const doc of vscode.workspace.textDocuments) {
+    if (doc.uri.scheme === "file" && pathsEqual(doc.uri.fsPath, fsPath)) return doc;
+  }
+  return undefined;
+}
+
+/** Watch disk creates/edits/deletes (AI Write, git checkout) — not only VS Code createFiles. */
+function watchIndexedDiskFiles(client) {
+  const disposables = [];
+  const pattern = "**/*.{java,xml,yml,yaml,properties}";
+  const folders = vscode.workspace.workspaceFolders || [];
+  const watchers =
+    folders.length === 0
+      ? [vscode.workspace.createFileSystemWatcher(pattern)]
+      : folders.map((folder) =>
+          vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, pattern)),
+        );
+  for (const watcher of watchers) {
+    disposables.push(watcher);
+    disposables.push(
+      watcher.onDidCreate((uri) => {
+        if (isIndexedFile(uri)) client.scheduleDiskIndex([uri.fsPath]);
+      }),
+      watcher.onDidChange((uri) => {
+        if (isIndexedFile(uri)) client.scheduleDiskIndex([uri.fsPath]);
+      }),
+      watcher.onDidDelete((uri) => {
+        if (isIndexedFile(uri)) client.scheduleDiskRemove([uri.fsPath]);
+      }),
+    );
+  }
+  disposables.push(
+    vscode.workspace.onDidRenameFiles((event) => {
+      const removed = [];
+      const added = [];
+      for (const f of event.files) {
+        if (isIndexedFile(f.oldUri)) removed.push(f.oldUri.fsPath);
+        if (isIndexedFile(f.newUri)) added.push(f.newUri.fsPath);
+      }
+      if (removed.length) client.scheduleDiskRemove(removed);
+      if (added.length) client.scheduleDiskIndex(added);
+    }),
+  );
+  return disposables;
 }
 
 function isConfigLike(document) {
@@ -230,16 +287,13 @@ class DefhopClient {
   constructor(context) {
     this.context = context;
     this.output = vscode.window.createOutputChannel("Defhop");
-    // Left: current step; Right: overall %
-    this.stepStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this.stepStatus.command = undefined;
-    this.stepStatus.tooltip = undefined;
-    this.stepStatus.hide();
+    // Only right-corner Defhop badge (spin vs check). No left-side step text.
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
     this.status.command = "defhop.status";
     this.status.tooltip = "Defhop";
-    this.status.text = "$(symbol-method) Defhop";
+    this.status.text = "$(sync~spin) Defhop";
     this.status.show();
+    this._statusMode = "loading"; // loading | sync | ready | error
     this.jdkStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 89);
     this.jdkStatus.command = "defhop.configureJdk";
     this.jdkStatus.hide();
@@ -254,13 +308,20 @@ class DefhopClient {
     this._stderrBuffer = "";
     this._syncedVersion = new Map(); // fsPath -> document.version last sent to overlay
     this._syncedHash = new Map(); // fsPath -> content fingerprint last sent
+    this._pendingDiskIndex = new Set();
+    this._pendingDiskRemove = new Set();
+    this._diskIndexTimer = undefined;
+    this._diskRemoveTimer = undefined;
+    this._diskIndexInFlight = 0;
+    this._diskIndexChain = Promise.resolve();
+    this._updateInFlight = 0;
     this._progress = emptyProgress();
     this._initSummary = "";
     this._lastLoggedPct = -1;
     this._displayPct = 0;
     this._targetPct = 0;
     this._animTimer = undefined;
-    this._lastStepText = "";
+    this._liveSyncLabel = "";
   }
 
   async ensureReady() {
@@ -348,8 +409,7 @@ class DefhopClient {
       this._ready = false;
       this.output.appendLine(`[backend] exited code=${code} signal=${signal}`);
       this._stopProgressAnim();
-      this.stepStatus.hide();
-      this.status.text = "$(error) Defhop";
+      this._setStatusMode("error", "后端已退出，点击查看输出");
       this._rejectAll(new Error(`Backend exited (${code ?? signal})`));
       if (this.child === child) this.child = undefined;
     });
@@ -414,33 +474,72 @@ class DefhopClient {
       this._markNavReady();
     }
 
-    this._updateStepStatus();
     this._ensureProgressAnim();
+    this._refreshStatusBar();
 
     if (pct >= 100 || this._progress.phase === "done") {
       this._targetPct = 100;
-      // Snap the bar immediately — avoid sitting on 99% while the ease finishes.
       this._displayPct = 100;
-      this.status.text = "$(check) Defhop";
-      this.stepStatus.hide();
-      this._lastStepText = "";
       this._stopProgressAnim();
+      this._refreshStatusBar();
     }
   }
 
-  _updateStepStatus() {
-    const p = this._progress || emptyProgress();
-    if (p.phase === "done" || (p.pct || 0) >= 100) {
-      this.stepStatus.hide();
-      this._lastStepText = "";
+  _liveSyncPendingCount() {
+    return this._pendingDiskIndex.size + this._diskIndexInFlight + this._updateInFlight;
+  }
+
+  /**
+   * Right-corner Defhop badge — only the leading icon changes:
+   *   $(sync~spin) Defhop  → indexing / catching up (codicon animates)
+   *   $(check) Defhop      → synced, OK to navigate
+   *   $(error) Defhop      → backend failed
+   */
+  _setStatusMode(mode, detail) {
+    this._statusMode = mode;
+    const tipExtra = detail ? `\n${detail}` : "";
+    this.status.backgroundColor = undefined;
+    if (mode === "error") {
+      this.status.text = "$(error) Defhop";
+      this.status.tooltip = `Defhop 出错${tipExtra}\n点击打开输出`;
+      this.status.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
       return;
     }
-    const step = (p.step || p.message || "索引中…").trim();
-    const text = `$(sync~spin) Defhop: ${step}`;
-    if (text === this._lastStepText) return;
-    this._lastStepText = text;
-    this.stepStatus.text = text;
-    this.stepStatus.show();
+    if (mode === "loading" || mode === "sync") {
+      // Same spinning badge for init build and live catch-up — stays "Defhop".
+      this.status.text = "$(sync~spin) Defhop";
+      if (mode === "loading") {
+        const pct = Math.max(0, Math.min(100, Math.floor(this._displayPct || 0)));
+        this.status.tooltip =
+          `Defhop 正在建索引${pct ? ` ${pct}%` : ""}…${tipExtra}\n转圈结束后变为 ✓，即可跳转。\n点击打开输出`;
+      } else {
+        this.status.tooltip =
+          `Defhop 正在同步改动…${tipExtra}\n转圈结束后变为 ✓，即可跳转。\n点击打开输出`;
+      }
+      return;
+    }
+    this.status.text = "$(check) Defhop";
+    this.status.tooltip =
+      `Defhop 已同步，可跳转。${tipExtra}\n点击打开输出`;
+  }
+
+  _refreshStatusBar() {
+    if (this._statusMode === "error" && !this._ready && !this._starting) {
+      return;
+    }
+    const p = this._progress || emptyProgress();
+    const initDone = p.phase === "done" || (p.pct || 0) >= 100;
+    const n = this._liveSyncPendingCount();
+    if (!initDone) {
+      // No left/step text (Spring / 缓存…); only right spinning badge.
+      this._setStatusMode("loading");
+      return;
+    }
+    if (n > 0) {
+      this._setStatusMode("sync");
+      return;
+    }
+    this._setStatusMode("ready");
   }
 
   _ensureProgressAnim() {
@@ -459,34 +558,127 @@ class DefhopClient {
     const target = Math.max(0, Math.min(100, this._targetPct || 0));
     let cur = this._displayPct || 0;
     if (cur >= target && target < 100) {
-      // Idle between backend updates: creep slowly so the bar never looks frozen.
       const creepCap = Math.min(99, target + 1.2);
       if (cur < creepCap && this._progress && this._progress.phase !== "done") {
         cur = Math.min(creepCap, cur + 0.15);
       }
     } else if (cur < target) {
       const gap = target - cur;
-      // Ease toward target — large jumps animate over ~0.4–0.8s.
       const step = Math.max(0.35, gap * 0.18);
       cur = Math.min(target, cur + step);
     }
     this._displayPct = cur;
-    const shown = Math.max(1, Math.min(100, Math.floor(cur)));
-    if (shown >= 100 && target >= 100) {
-      this.status.text = "$(check) Defhop";
-      this.stepStatus.hide();
+    if (Math.floor(cur) >= 100 && target >= 100) {
       this._stopProgressAnim();
-      return;
     }
-    this.status.text = `Defhop ${shown}%`;
+    this._refreshStatusBar();
   }
 
   /**
-   * Push buffer to overlay (fire-and-forget). Backend stores overlay then parses async;
-   * Navigate also sync-publishes stale overlays for cross-file freshness.
+   * Queue disk INDEX for AI/tool writes. Coalesce ~16ms bursts, then sync-index
+   * so F12 can run as soon as the batch returns (backend INDEX is synchronous).
    */
-  pushBuffer(document) {
-    const p = this.pushBufferAwait(document);
+  scheduleDiskIndex(paths) {
+    if (!this._ready || !paths || paths.length === 0) return;
+    for (const p of paths) {
+      if (p) this._pendingDiskIndex.add(p);
+    }
+    this._refreshStatusBar();
+    if (this._diskIndexTimer) clearTimeout(this._diskIndexTimer);
+    this._diskIndexTimer = setTimeout(() => {
+      this._diskIndexTimer = undefined;
+      void this._flushDiskIndexAwait();
+    }, 16);
+  }
+
+  /** Debounced REMOVE when files disappear on disk. */
+  scheduleDiskRemove(paths) {
+    if (!this._ready || !paths || paths.length === 0) return;
+    for (const p of paths) {
+      if (!p) continue;
+      this._pendingDiskIndex.delete(p);
+      this._pendingDiskRemove.add(p);
+      this._syncedVersion.delete(p);
+      this._syncedHash.delete(p);
+    }
+    this._refreshStatusBar();
+    if (this._diskRemoveTimer) clearTimeout(this._diskRemoveTimer);
+    this._diskRemoveTimer = setTimeout(() => this._flushDiskRemove(), 16);
+  }
+
+  /** Await any queued disk INDEX before navigation (AI writes must be visible). */
+  async flushPendingDiskIndex() {
+    if (this._diskIndexTimer) {
+      clearTimeout(this._diskIndexTimer);
+      this._diskIndexTimer = undefined;
+    }
+    await this._flushDiskIndexAwait();
+    await this._diskIndexChain;
+  }
+
+  _flushDiskIndexAwait() {
+    const run = async () => {
+      const pending = [...this._pendingDiskIndex];
+      this._pendingDiskIndex.clear();
+      if (!this._ready || pending.length === 0) {
+        this._refreshStatusBar();
+        return;
+      }
+      const fromDisk = [];
+      const openPushes = [];
+      for (const p of pending) {
+        if (this._pendingDiskRemove.has(p)) continue;
+        const doc = openDocumentForPath(p);
+        if (doc && isConfigLike(doc)) {
+          const push = this.pushBufferAwait(doc);
+          if (push) openPushes.push(push);
+        } else {
+          fromDisk.push(p);
+        }
+      }
+      this._liveSyncLabel = fromDisk[0] || pending[0] || "";
+      this._diskIndexInFlight += 1;
+      this._refreshStatusBar();
+      try {
+        if (openPushes.length) {
+          await Promise.allSettled(openPushes);
+        }
+        if (fromDisk.length) {
+          await this._doRequest("INDEX", fromDisk, 60000);
+        }
+      } catch (error) {
+        this.output.appendLine(`[index] ${error.message}`);
+      } finally {
+        this._diskIndexInFlight = Math.max(0, this._diskIndexInFlight - 1);
+        this._liveSyncLabel = "";
+        this._refreshStatusBar();
+      }
+    };
+    this._diskIndexChain = this._diskIndexChain.then(run, run);
+    return this._diskIndexChain;
+  }
+
+  _flushDiskRemove() {
+    this._diskRemoveTimer = undefined;
+    const pending = [...this._pendingDiskRemove];
+    this._pendingDiskRemove.clear();
+    if (!this._ready || pending.length === 0) {
+      this._refreshStatusBar();
+      return;
+    }
+    this._doRequest("REMOVE", pending, 30000)
+      .catch((error) => {
+        this.output.appendLine(`[remove] ${error.message}`);
+      })
+      .finally(() => this._refreshStatusBar());
+  }
+
+  /**
+   * Push buffer to overlay (fire-and-forget by default).
+   * Bulk AI/paste passes { sync: true } so the index is committed before return.
+   */
+  pushBuffer(document, opts) {
+    const p = this.pushBufferAwait(document, opts);
     if (p) {
       p.catch((error) => {
         this.output.appendLine(`[update] ${error.message}`);
@@ -494,34 +686,48 @@ class DefhopClient {
     }
   }
 
-  /** Await overlay store for one document. Returns null when skipped. */
-  pushBufferAwait(document) {
+  /**
+   * Await overlay store for one document. Returns null when skipped.
+   * opts.sync → backend IndexBufferSync (IntelliJ commitDocument for large edits).
+   */
+  pushBufferAwait(document, opts = {}) {
     if (!this._ready || !document || document.uri.scheme !== "file") return null;
     if (!isConfigLike(document)) return null;
     const file = document.uri.fsPath;
     const ver = document.version;
-    if (this._syncedVersion.get(file) === ver) return Promise.resolve();
+    const sync = !!opts.sync;
+    if (!sync && this._syncedVersion.get(file) === ver) return Promise.resolve();
     const text = document.getText();
     const hash = contentFingerprint(text);
     // Same bytes as last push (common on undo) — skip base64 IPC entirely.
-    if (this._syncedHash.get(file) === hash) {
+    if (!sync && this._syncedHash.get(file) === hash) {
       this._syncedVersion.set(file, ver);
       return Promise.resolve();
     }
     this._syncedVersion.set(file, ver);
     this._syncedHash.set(file, hash);
-    return this._doRequest("UPDATE", [file, text], 15000).catch((error) => {
-      this._syncedVersion.delete(file);
-      this._syncedHash.delete(file);
-      throw error;
-    });
+    const args = sync ? [file, text, "sync"] : [file, text];
+    this._updateInFlight += 1;
+    this._liveSyncLabel = file;
+    this._refreshStatusBar();
+    return this._doRequest("UPDATE", args, sync ? 30000 : 15000)
+      .catch((error) => {
+        this._syncedVersion.delete(file);
+        this._syncedHash.delete(file);
+        throw error;
+      })
+      .finally(() => {
+        this._updateInFlight = Math.max(0, this._updateInFlight - 1);
+        if (this._updateInFlight === 0) this._liveSyncLabel = "";
+        this._refreshStatusBar();
+      });
   }
 
   /**
-   * Push open buffers before navigation.
-   * Always await the preferred document; other tabs get a short budget so F12 stays snappy.
+   * IntelliJ commitAllDocuments: await every open indexed buffer before nav.
+   * (No short race timeout — missing a sibling AI edit is worse than ~ms wait.)
    */
-  async syncOpenBuffers(preferDocument, otherBudgetMs = 120) {
+  async syncOpenBuffers(preferDocument) {
     if (!this._ready) return;
     if (preferDocument) {
       const prefer = this.pushBufferAwait(preferDocument);
@@ -530,15 +736,33 @@ class DefhopClient {
     const pending = [];
     const preferPath = preferDocument?.uri?.fsPath;
     for (const doc of vscode.workspace.textDocuments) {
-      if (preferPath && doc.uri.fsPath === preferPath) continue;
+      if (preferPath && pathsEqual(doc.uri.fsPath, preferPath)) continue;
       const p = this.pushBufferAwait(doc);
       if (p) pending.push(p);
     }
     if (pending.length === 0) return;
-    await Promise.race([
-      Promise.allSettled(pending),
-      new Promise((resolve) => setTimeout(resolve, otherBudgetMs)),
-    ]);
+    await Promise.allSettled(pending);
+  }
+
+  /** True when the edit looks like AI apply / paste (not a single keystroke). */
+  isBulkEdit(event) {
+    if (!event || !event.contentChanges || event.contentChanges.length === 0) return false;
+    if (event.contentChanges.length >= 4) return true;
+    let span = 0;
+    for (const c of event.contentChanges) {
+      span += (c.text || "").length + (c.rangeLength || 0);
+      if ((c.text || "").includes("\n") && (c.text || "").length >= 40) return true;
+    }
+    return span >= 80;
+  }
+
+  onDocumentEdited(event) {
+    if (!event || !event.document) return;
+    if (this.isBulkEdit(event)) {
+      this.pushBuffer(event.document, { sync: true });
+    } else {
+      this.pushBuffer(event.document);
+    }
   }
 
   _doRequest(command, args, timeoutMs = 60000) {
@@ -926,8 +1150,9 @@ class DefhopClient {
 
   async navQuery(command, document, position, timeoutMs = 3000, includeDeclaration = false) {
     if (!this._ready) return { locations: [] };
-    // Prefer current doc; other open buffers get a short sync budget.
+    // Drain AI/disk INDEX first, then open buffers — F12 must see the latest files.
     try {
+      await this.flushPendingDiskIndex();
       await this.syncOpenBuffers(document);
     } catch (error) {
       this.output.appendLine(`[nav] sync ${error.message}`);
@@ -978,6 +1203,7 @@ class DefhopClient {
   async documentHighlights(document, position) {
     if (!this._ready) return [];
     try {
+      await this.flushPendingDiskIndex();
       await this.syncOpenBuffers(document);
       const message = await this._doRequest(
         "HIGHLIGHT",
@@ -1215,7 +1441,6 @@ class DefhopClient {
     this.child = undefined;
     this._ready = false;
     this.output.dispose();
-    this.stepStatus.dispose();
     this.status.dispose();
     if (this.jdkStatus) this.jdkStatus.dispose();
   }
@@ -1540,9 +1765,11 @@ async function activate(context) {
       }
       await vscode.window.showTextDocument(locations[0].uri, { selection: locations[0].range });
     }),
-    // Instant overlay — every keystroke / save / open
-    vscode.workspace.onDidChangeTextDocument((event) => client.pushBuffer(event.document)),
-    vscode.workspace.onDidSaveTextDocument((document) => client.pushBuffer(document)),
+    // Instant overlay — keystrokes async; AI/paste bulk → sync commit (IntelliJ-like)
+    vscode.workspace.onDidChangeTextDocument((event) => client.onDocumentEdited(event)),
+    vscode.workspace.onDidSaveTextDocument((document) =>
+      client.pushBuffer(document, { sync: true }),
+    ),
     vscode.workspace.onDidOpenTextDocument((document) => {
       if (isIndexedFile(document.uri) && !client._ready && !client._starting) {
         startIndex(`opened ${path.basename(document.uri.fsPath)}`);
@@ -1557,25 +1784,14 @@ async function activate(context) {
       client._syncedHash.delete(file);
       client._doRequest("DROPOVERLAY", [file], 5000).catch(() => {});
     }),
-    // Incremental: index/remove single paths instead of full REINDEX
+    // Incremental: VS Code create/delete + disk watcher (AI Write / external edits)
     vscode.workspace.onDidCreateFiles((event) => {
-      const paths = event.files.filter(isIndexedFile).map((u) => u.fsPath);
-      if (paths.length === 0 || !client._ready) return;
-      client
-        ._doRequest("INDEX", paths, 60000)
-        .catch((error) => client.output.appendLine(`[index] ${error.message}`));
+      client.scheduleDiskIndex(event.files.filter(isIndexedFile).map((u) => u.fsPath));
     }),
     vscode.workspace.onDidDeleteFiles((event) => {
-      const paths = event.files.filter(isIndexedFile).map((u) => u.fsPath);
-      if (paths.length === 0 || !client._ready) return;
-      for (const p of paths) {
-        client._syncedVersion.delete(p);
-        client._syncedHash.delete(p);
-      }
-      client
-        ._doRequest("REMOVE", paths, 30000)
-        .catch((error) => client.output.appendLine(`[remove] ${error.message}`));
+      client.scheduleDiskRemove(event.files.filter(isIndexedFile).map((u) => u.fsPath));
     }),
+    ...watchIndexedDiskFiles(client),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
       if (!event.affectsConfiguration("defhop.jdkHome")) return;
       if (client._writingJdkHome) return;

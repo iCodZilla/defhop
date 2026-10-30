@@ -2,6 +2,9 @@ backend/go/**
 testdata/**
 scripts/**
 dist/**
+.cursor/**
+.defhop/**
+**/.defhop/**
 .imp-cache/**
 **/.cache/**
 **/.defhop-cache/**

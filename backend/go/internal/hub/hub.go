@@ -928,6 +928,7 @@ func (h *Hub) indexPluginsParallel(ctx context.Context, plugs []plugin.Plugin, f
 // UpdateBuffer stores the overlay immediately (returns at once) and reindexes
 // the file in the background. Navigate also sync-publishes stale overlays so
 // cross-file jumps see edits without waiting on this async path.
+// Used for editor keystrokes — must not block IPC.
 func (h *Hub) UpdateBuffer(path, text string) uint64 {
 	key := store.PathKey(path)
 	gen := h.Overlay.Put(key, path, text)
@@ -935,14 +936,23 @@ func (h *Hub) UpdateBuffer(path, text string) uint64 {
 	return gen
 }
 
-// IndexDiskFile parses one path from disk into the index (create / incremental).
+// IndexBufferSync puts the overlay and publishes into the symbol index on this
+// goroutine. Used for AI/tool disk writes so INDEX returns only when navigable.
+func (h *Hub) IndexBufferSync(path, text string) uint64 {
+	key := store.PathKey(path)
+	gen := h.Overlay.Put(key, path, text)
+	h.indexOneBuffer(path, key, text, gen)
+	return gen
+}
+
+// IndexDiskFile reads one path from disk and sync-indexes it (create / incremental).
 // Returns false when the file cannot be read.
 func (h *Hub) IndexDiskFile(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
-	h.UpdateBuffer(path, string(data))
+	h.IndexBufferSync(path, string(data))
 	return true
 }
 
@@ -1033,11 +1043,11 @@ func (h *Hub) indexOneBuffer(path, key, text string, gen uint64) {
 	}
 }
 
-const maxSyncOverlayFlush = 24
-
-// publishStaleOverlays sync-indexes overlay buffers whose gen is ahead of the
-// published FileSlice. Prefer the navigation target first, then newest gens.
-// Uses AllMeta so we do not copy every open buffer's Text up front.
+// publishStaleOverlays mirrors IntelliJ "lazy index update on first access" /
+// PsiDocumentManager.commit*: before DEF/REFS, publish every dirty overlay into
+// the symbol index so navigation never waits on the async UPDATE worker.
+// Prefer the navigation target first, then newest gens. No hard cap — a truncated
+// flush is what made multi-file AI edits feel "broken" until a later reindex.
 func (h *Hub) publishStaleOverlays(preferPath string) {
 	entries := h.Overlay.AllMeta()
 	if len(entries) == 0 {
@@ -1060,7 +1070,6 @@ func (h *Hub) publishStaleOverlays(preferPath string) {
 		h.indexOneBuffer(ent.Path, e.Key, ent.Text, e.Gen)
 		return true
 	}
-	// Fast path: preferred file only when it is the sole interesting stale buffer.
 	if preferKey != "" {
 		for _, e := range entries {
 			if e.Key != preferKey {
@@ -1079,15 +1088,8 @@ func (h *Hub) publishStaleOverlays(preferPath string) {
 		}
 		return entries[i].Gen > entries[j].Gen
 	})
-	n := 0
 	for _, e := range entries {
-		if !flushOne(e) {
-			continue
-		}
-		n++
-		if n >= maxSyncOverlayFlush {
-			break
-		}
+		flushOne(e)
 	}
 }
 

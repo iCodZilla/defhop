@@ -123,7 +123,15 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		if len(args) < 2 {
 			return `,"gen":0`, nil
 		}
-		gen := h.UpdateBuffer(args[0], args[1])
+		// Optional 3rd arg "sync": IntelliJ-style commit — index before reply
+		// (bulk AI / paste). Default stays async so keystrokes do not block IPC.
+		sync := len(args) >= 3 && (args[2] == "sync" || args[2] == "1" || args[2] == "true")
+		var gen uint64
+		if sync {
+			gen = h.IndexBufferSync(args[0], args[1])
+		} else {
+			gen = h.UpdateBuffer(args[0], args[1])
+		}
 		return fmt.Sprintf(`,"gen":%d`, gen), nil
 
 	case "INDEX":
