@@ -64,7 +64,7 @@ func Enrich(fd *model.FileSlice) {
 				}
 			}
 		}
-		if anns["Builder"] {
+		if anns["Builder"] || anns["SuperBuilder"] {
 			bk := methodKey(sym.Key, "builder")
 			if !existing[bk] {
 				extra = append(extra, &model.Symbol{
@@ -86,6 +86,44 @@ func Enrich(fd *model.FileSlice) {
 				})
 				existing[buildK] = true
 			}
+		}
+		simple := typeSimpleName(sym)
+		collectFields := func(requiredOnly bool) []*model.Symbol {
+			var fields []*model.Symbol
+			for _, f := range fd.Symbols {
+				if f == nil || f.Kind != "field" || f.OwnerKey != sym.Key {
+					continue
+				}
+				if strings.HasPrefix(f.Name, "$") || f.Name == "log" {
+					continue
+				}
+				if requiredOnly && !fieldRequired(f) {
+					continue
+				}
+				fields = append(fields, f)
+			}
+			return fields
+		}
+		addCtorSig := func(sig string) {
+			ck := ctorKey(sym.Key, simple, sig)
+			if existing[ck] {
+				return
+			}
+			extra = append(extra, &model.Symbol{
+				Key: ck, Kind: "constructor", Name: simple, OwnerKey: sym.Key,
+				Declaration: sym.Declaration,
+				Annotations: []string{"lombok"},
+			})
+			existing[ck] = true
+		}
+		if anns["NoArgsConstructor"] {
+			addCtorSig("")
+		}
+		if anns["RequiredArgsConstructor"] {
+			addCtorSig(ctorParamSig(collectFields(true)))
+		}
+		if anns["AllArgsConstructor"] {
+			addCtorSig(ctorParamSig(collectFields(false)))
 		}
 		if anns["Slf4j"] {
 			fk := "F|" + sym.Key + "|log"
@@ -118,6 +156,58 @@ func annSet(anns []string) map[string]bool {
 
 func methodKey(owner, name string) string {
 	return "M|" + owner + "|" + name + "|"
+}
+
+func ctorKey(owner, name, paramsSig string) string {
+	return "M|" + owner + "|" + name + "|" + paramsSig
+}
+
+func typeSimpleName(sym *model.Symbol) string {
+	if sym == nil {
+		return ""
+	}
+	n := sym.Name
+	if i := strings.LastIndexAny(n, ".$"); i >= 0 {
+		n = n[i+1:]
+	}
+	if n == "" {
+		n = strings.TrimPrefix(sym.Key, "T|")
+		if i := strings.LastIndexAny(n, ".$"); i >= 0 {
+			n = n[i+1:]
+		}
+	}
+	return n
+}
+
+func fieldRequired(f *model.Symbol) bool {
+	if f == nil {
+		return false
+	}
+	for _, a := range f.Annotations {
+		base := a
+		if i := strings.LastIndexByte(a, '.'); i >= 0 {
+			base = a[i+1:]
+		}
+		if base == "final" || base == "NonNull" || base == "NotNull" || base == "Nonnull" {
+			return true
+		}
+	}
+	return false
+}
+
+func ctorParamSig(fields []*model.Symbol) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(fields))
+	for _, f := range fields {
+		t := strings.TrimPrefix(f.TypeKey, "T|")
+		if t == "" {
+			t = "Object"
+		}
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, ",")
 }
 
 func getterName(f *model.Symbol) string {

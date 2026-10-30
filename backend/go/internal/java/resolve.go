@@ -3,7 +3,9 @@ package java
 import (
 	"defhop/internal/model"
 	"defhop/internal/store"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Resolve finds the symbol under the cursor in a file slice against a snapshot.
@@ -1086,16 +1088,74 @@ func References(snap *store.Snapshot, sym *model.Symbol, includeDecl bool) []*mo
 		for _, k := range implementationMethodKeys(snap, sym) {
 			keys[k] = true
 		}
+		// Also collect refs through the declaring interface / abstract owner
+		// when the cursor landed on a concrete override.
+		if sym.OwnerKey != "" {
+			if owner := snap.SymTab[sym.OwnerKey]; owner != nil {
+				for _, sk := range owner.SuperKeys {
+					prefix := "M|" + sk + "|" + sym.Name + "|"
+					params := ""
+					ownPrefix := "M|" + sym.OwnerKey + "|" + sym.Name + "|"
+					if strings.HasPrefix(sym.Key, ownPrefix) {
+						params = sym.Key[len(ownPrefix):]
+					}
+					exact := prefix + params
+					if _, ok := snap.SymTab[exact]; ok {
+						keys[exact] = true
+					} else {
+						for _, m := range snap.Methods(sk, sym.Name) {
+							keys[m.Key] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if sym.Kind == "field" && sym.OwnerKey != "" {
+		// Lombok / bean accessors that read or write this field.
+		for _, name := range fieldAccessorNames(sym) {
+			for _, m := range snap.Methods(sym.OwnerKey, name) {
+				keys[m.Key] = true
+			}
+		}
 	}
 	var out []*model.Location
+	seen := map[string]bool{}
 	for k := range keys {
 		for _, ref := range snap.Refs[k] {
 			if ref.Role == "declaration" && !includeDecl {
 				continue
 			}
-			if ref.Loc != nil {
-				out = append(out, ref.Loc)
+			if ref.Loc == nil {
+				continue
 			}
+			id := ref.Loc.Path + ":" + strconv.Itoa(ref.Loc.Line) + ":" + strconv.Itoa(ref.Loc.Character)
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, ref.Loc)
+		}
+	}
+	return out
+}
+
+func fieldAccessorNames(sym *model.Symbol) []string {
+	if sym == nil || sym.Name == "" {
+		return nil
+	}
+	n := sym.Name
+	export := n
+	if r := []rune(n); len(r) > 0 {
+		r[0] = unicode.ToUpper(r[0])
+		export = string(r)
+	}
+	out := []string{"get" + export, "set" + export}
+	if strings.TrimPrefix(sym.TypeKey, "T|") == "boolean" {
+		if strings.HasPrefix(n, "is") && len(n) > 2 {
+			out = append(out, n)
+		} else {
+			out = append(out, "is"+export)
 		}
 	}
 	return out

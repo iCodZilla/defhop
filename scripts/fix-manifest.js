@@ -66,7 +66,7 @@ SOFTWARE.
   );
 }
 
-const out = path.join(root, "dist", "defhop-1.0.0.vsix");
+const out = path.join(root, "dist", `defhop-${pkg.version}.vsix`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 if (fs.existsSync(out)) fs.unlinkSync(out);
 

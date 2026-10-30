@@ -148,15 +148,51 @@ func skipAnns(z *lx, tk tok, anns *[]string) tok {
 			tk = nt
 			break
 		}
+		value := ""
 		if tk.t == tLP {
+			value = annStringArg(z)
 			skP(z)
 			tk = z.nx()
 		}
 		if anns != nil && name != "" {
 			*anns = append(*anns, name)
+			if value != "" {
+				*anns = append(*anns, name+":"+value)
+			}
 		}
 	}
 	return tk
+}
+
+// annStringArg peeks the first string literal inside annotation (...), without consuming.
+func annStringArg(z *lx) string {
+	if z == nil {
+		return ""
+	}
+	save := z.pos
+	defer func() { z.pos = save }()
+	lit := func(t tok) string {
+		if t.t != tSTR || t.b <= t.a+1 || t.b > len(z.src) {
+			return ""
+		}
+		// tokens keep quotes in [a,b)
+		inner := string(z.src[t.a+1 : t.b-1])
+		return inner
+	}
+	tk := z.nx()
+	if s := lit(tk); s != "" {
+		return s
+	}
+	// value = "..." or name = "..."
+	if tk.t == tID {
+		eq := z.nx()
+		if eq.t == tASGN {
+			if s := lit(z.nx()); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 func (r *parseResult) parseType(tk tok, z *lx, p, source string, imps []string,
@@ -327,6 +363,9 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 	memberStart := tk.a
 	tk = skipAnns(z, tk, &anns)
 	for tk.t == tID && isMod(tk.s) {
+		if tk.s == "final" {
+			anns = append(anns, "final")
+		}
 		tk = z.nx()
 	}
 	if tk.t == tID && isTypeKW(tk.s) {

@@ -1,8 +1,31 @@
 # Changelog
 
-## [1.0.7] - Unreleased
+## [1.0.8] - 2026-10-30
+
+### Added
+- **Samples sync** — fixtures + smoke for Qualifier, profile yml, Controller peers, `@Select`, Lombok ctors/SuperBuilder, Document Highlight; `gradle/libs.versions.toml`.
+- **Dev policy** — features must ship with `testdata/samples` + `smoke-test-samples.js` (`.cursor/rules/feature-samples-smoke.mdc`).
+
+### Fixed
+- **Plugin Detect** — ensure lombok/mapstruct hints when sample window misses them; wipe demo smoke cache each run.
+- **Deps index order** — workspace `.defhop-deps` jars before JDK so project libs navigate promptly.
+
+## [1.0.7] - 2026-10-30
 
 Performance, memory, and navigation UX (dev iterations consolidated into one release).
+
+### Added
+- **Lombok constructors** — `@NoArgsConstructor` / `@RequiredArgsConstructor` / `@AllArgsConstructor` / `@SuperBuilder` synthesize navigable members.
+- **MyBatis annotation SQL** — `@Select` / `@Insert` / … via **Go to MyBatis SQL** (ROUTE).
+- **Document Highlight** — same-file read highlights from the Go index.
+- **`@Qualifier` injection** — F12 on injected fields prefers beans matching Qualifier / named component.
+- **Controller path peers** — same HTTP path Controllers jump to each other (plus Feign).
+- **Profile configs** — `application-*.yml` hits ordered after base `application.yml`.
+- **Gradle Version Catalog** — parse `libs.versions.toml` + `platform(...)` coords for dependency sources.
+
+### Improved
+- **Find References** — include interface/super method keys and Lombok field accessors (`getX`/`setX`).
+- **Annotation values** — capture `@Qualifier("…")` / `@Service("…")` string args for nav.
 
 ### Fixed
 - **WSL / Linux startup** — no longer tries to spawn `defhop.exe` (EACCES); selects `defhop-linux-x64`/`arm64`, `chmod +x`, and packages cross-built backends.
@@ -24,7 +47,7 @@ Performance, memory, and navigation UX (dev iterations consolidated into one rel
 - **Overload by arg type** — after arity match, prefer overloads whose params fit simple arg types (literals / locals).
 - **JDK status** — status-bar chip shows JDK basename + source; commands `Configure JDK Home` / `Clear Project JDK Home` to re-pick or clear.
 - **JDK on-demand DEF** — `SimpleDateFormat` / other `java.*` types resolve from `src.zip` on demand.
-- **JDK path priority** — workspace `defhop.jdkHome` → user setting → `JAVA_HOME`/`JDK_HOME` → auto-detect; env/auto results are written into the **workspace** setting so manual setup is usually unnecessary.
+- **JDK path priority** — workspace `defhop.jdkHome` → `JAVA_HOME`/`JDK_HOME` → auto-detect; env/auto results are written into the **workspace** setting. **User/global `defhop.jdkHome` is ignored** so local and Remote-SSH JDK paths stay independent.
 - **JDK path prompt** — F12 on `java.*` only when every layer fails; ignores stale index-cache hits when no JDK is resolvable.
 - **JDK extract paths** — unify cache dirs (`jdk-<hash>/java/...`), strip module prefixes, repair dir-vs-file clashes so F12 never opens a directory.
 - **Multi-root workspaces** — all Java workspace folders are scanned into one index (`INIT` extra roots).

@@ -16,8 +16,16 @@ public class SampleAppConfig {
     @Value("${samples.bank-import.enabled:false}")
     private boolean enabled;
 
+    /** Profile key from {@code application-dev.yml}. */
+    @Value("${samples.dev.banner:none}")
+    private String devBanner;
+
     public String getAppName() {
         return appName;
+    }
+
+    public String getDevBanner() {
+        return devBanner;
     }
 
     public String getGreeting() {

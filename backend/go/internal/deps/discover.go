@@ -34,6 +34,14 @@ var (
 	rePropEntry   = regexp.MustCompile(`<(?:[A-Za-z0-9_.-]+:)?([A-Za-z0-9_.-]+)>\s*([^<]+?)\s*</`)
 	reDepMgmt     = regexp.MustCompile(`(?s)<dependencyManagement>(.*?)</dependencyManagement>`)
 	reDepsBlock   = regexp.MustCompile(`(?s)<dependencies>(.*?)</dependencies>`)
+	// platform("g:bom:v") / enforcedPlatform('g:bom:v')
+	reGradlePlatform = regexp.MustCompile(`(?i)(?:enforcedPlatform|platform)\s*\(\s*["']([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([A-Za-z0-9._-]+)["']\s*\)`)
+	// toml: foo = { module = "g:a", version = "1.0" }
+	reTomlModuleVer = regexp.MustCompile(`(?m)^\s*[A-Za-z0-9_.-]+\s*=\s*\{\s*module\s*=\s*"([^"]+)"\s*,\s*version(?:\.ref)?\s*=\s*"([^"]+)"`)
+	// toml: foo = { group = "g", name = "a", version = "1.0" }
+	reTomlGroupName = regexp.MustCompile(`(?m)^\s*[A-Za-z0-9_.-]+\s*=\s*\{[^}]*group\s*=\s*"([^"]+)"[^}]*name\s*=\s*"([^"]+)"[^}]*version(?:\.ref)?\s*=\s*"([^"]+)"`)
+	// toml versions / shorthand library lines: foo = "…"
+	reTomlVersion = regexp.MustCompile(`(?m)^\s*([A-Za-z0-9_.-]+)\s*=\s*"([^"]+)"\s*$`)
 )
 
 // DiscoverSourcesJars finds dependency source archives for workspace roots.
@@ -57,12 +65,8 @@ func DiscoverSourcesJars(roots []string, importHits map[string]int) []JarRef {
 		out = append(out, r)
 	}
 
-	// 1) JDK sources first (highest navigation value for java.* types).
-	if jdk := findJDKSrcZip(); jdk != "" {
-		add(JarRef{Path: jdk, Label: "jdk", IsJDK: true, Prefer: true})
-	}
-
-	// 2) Explicit workspace lib / .defhop-deps folders (shallow — avoid walking the whole tree).
+	// 1) Workspace lib / .defhop-deps first — small, project-specific, needed for
+	//    nav before the large JDK src.zip finishes materializing in the background.
 	for _, root := range roots {
 		for _, dir := range []string{
 			filepath.Join(root, "lib"),
@@ -86,6 +90,11 @@ func DiscoverSourcesJars(roots []string, importHits map[string]int) []JarRef {
 				return nil
 			})
 		}
+	}
+
+	// 2) JDK sources (java.*); larger — indexed after workspace jars.
+	if jdk := findJDKSrcZip(); jdk != "" {
+		add(JarRef{Path: jdk, Label: "jdk", IsJDK: true, Prefer: true})
 	}
 
 	m2 := mavenLocalRepo()
@@ -133,6 +142,15 @@ func collectCoords(roots []string) []coord {
 	}
 
 	for _, root := range roots {
+		// Gradle Version Catalog (libs.versions.toml) — BOM / library coords with versions.
+		for _, cat := range []string{
+			filepath.Join(root, "gradle", "libs.versions.toml"),
+			filepath.Join(root, "libs.versions.toml"),
+		} {
+			for _, c := range parseGradleVersionCatalog(cat) {
+				add(c)
+			}
+		}
 		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
@@ -156,6 +174,10 @@ func collectCoords(roots []string) []coord {
 				}
 			case name == "build.gradle" || name == "build.gradle.kts":
 				for _, c := range parseGradleCoords(path) {
+					add(c)
+				}
+			case name == "libs.versions.toml":
+				for _, c := range parseGradleVersionCatalog(path) {
 					add(c)
 				}
 			}
@@ -288,10 +310,92 @@ func parseGradleCoords(path string) []coord {
 	if err != nil {
 		return nil
 	}
+	text := string(data)
 	var out []coord
-	for _, m := range reGradleCoord.FindAllStringSubmatch(string(data), -1) {
+	for _, m := range reGradleCoord.FindAllStringSubmatch(text, -1) {
 		if len(m) == 4 {
 			out = append(out, coord{Group: m[1], Artifact: m[2], Version: m[3]})
+		}
+	}
+	for _, m := range reGradlePlatform.FindAllStringSubmatch(text, -1) {
+		if len(m) == 4 {
+			out = append(out, coord{Group: m[1], Artifact: m[2], Version: m[3]})
+		}
+	}
+	return out
+}
+
+func parseGradleVersionCatalog(path string) []coord {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	text := string(data)
+	versions := map[string]string{}
+	// Parse [versions] section loosely.
+	if i := strings.Index(text, "[versions]"); i >= 0 {
+		rest := text[i+len("[versions]"):]
+		if j := strings.Index(rest, "\n["); j >= 0 {
+			rest = rest[:j]
+		}
+		for _, m := range reTomlVersion.FindAllStringSubmatch(rest, -1) {
+			if len(m) == 3 {
+				versions[m[1]] = m[2]
+			}
+		}
+	}
+	resolveVer := func(v string) string {
+		if v == "" {
+			return ""
+		}
+		if resolved, ok := versions[v]; ok {
+			return resolved
+		}
+		return v
+	}
+	var out []coord
+	seen := map[string]bool{}
+	add := func(c coord) {
+		c.Version = resolveVer(c.Version)
+		if c.Group == "" || c.Artifact == "" || c.Version == "" {
+			return
+		}
+		key := c.Group + ":" + c.Artifact + ":" + c.Version
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, c)
+	}
+	for _, m := range reTomlModuleVer.FindAllStringSubmatch(text, -1) {
+		if len(m) < 3 {
+			continue
+		}
+		parts := strings.SplitN(m[1], ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		add(coord{Group: parts[0], Artifact: parts[1], Version: m[2]})
+	}
+	for _, m := range reTomlGroupName.FindAllStringSubmatch(text, -1) {
+		if len(m) == 4 {
+			add(coord{Group: m[1], Artifact: m[2], Version: m[3]})
+		}
+	}
+	// Also accept shorthand: foo = "g:a:v"
+	if i := strings.Index(text, "[libraries]"); i >= 0 {
+		rest := text[i+len("[libraries]"):]
+		if j := strings.Index(rest, "\n["); j >= 0 {
+			rest = rest[:j]
+		}
+		for _, m := range reTomlVersion.FindAllStringSubmatch(rest, -1) {
+			if len(m) != 3 {
+				continue
+			}
+			parts := strings.Split(m[2], ":")
+			if len(parts) == 3 {
+				add(coord{Group: parts[0], Artifact: parts[1], Version: parts[2]})
+			}
 		}
 	}
 	return out
@@ -399,7 +503,7 @@ func FindJDKSrcZip() string {
 }
 
 func findJDKSrcZip() string {
-	// 1) Explicit preference (project / user setting via extension, or DEFHOP_JDK_HOME).
+	// 1) Explicit preference (project setting via extension, or DEFHOP_JDK_HOME).
 	for _, p := range configuredSrcZipCandidates() {
 		if z := validSrcZip(p); z != "" {
 			return z

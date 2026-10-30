@@ -281,7 +281,15 @@ func (p *Plugin) Contribute(core plugin.Core, req model.NavRequest, primary *mod
 	if primary == nil || (primary.Kind != "method" && primary.Kind != "constructor") {
 		return nil
 	}
+	// Annotation mappers (@Select/@Insert/…): SQL lives on the Java method.
+	// Only ROUTE (Go to MyBatis SQL) — leave DEF to core (impls / declaration).
 	if HasSQLAnnotation(primary.Annotations) {
+		if req.Kind == model.NavRoute && primary.Declaration != nil {
+			loc := *primary.Declaration
+			loc.Kind = "mybatis-sql"
+			loc.Label = SQLAnnotationLabel(primary.Annotations)
+			return []*model.Location{&loc}
+		}
 		return nil
 	}
 	owner := strings.TrimPrefix(primary.OwnerKey, "T|")

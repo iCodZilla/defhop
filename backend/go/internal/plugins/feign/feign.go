@@ -160,14 +160,31 @@ func (p *Plugin) Contribute(core plugin.Core, req model.NavRequest, primary *mod
 	}
 
 	switch req.Kind {
-	case model.NavDef, model.NavRoute:
+	case model.NavDef:
+		// Feign method → Controller. Controller DEF stays with core (declaration).
 		if ep.Kind == "feign" {
 			return tagLocs(p.findOpposite(ep, "controller"), "feign-controller", "Controller")
 		}
-	case model.NavRefs, model.NavImpl:
-		// Controller → Feign providers. Feign method refs stay as Java call-sites (core).
+	case model.NavRoute:
+		if ep.Kind == "feign" {
+			return tagLocs(p.findOpposite(ep, "controller"), "feign-controller", "Controller")
+		}
 		if ep.Kind == "controller" {
-			return tagLocs(p.findOpposite(ep, "feign"), "feign-client", "Feign")
+			var out []*model.Location
+			out = append(out, tagLocs(p.findPeers(ep, "controller"), "http-peer", "Controller")...)
+			out = append(out, tagLocs(p.findOpposite(ep, "feign"), "feign-client", "Feign")...)
+			return out
+		}
+	case model.NavRefs, model.NavImpl:
+		// Controller → Feign providers + other Controllers sharing the path.
+		if ep.Kind == "controller" {
+			var out []*model.Location
+			out = append(out, tagLocs(p.findOpposite(ep, "feign"), "feign-client", "Feign")...)
+			out = append(out, tagLocs(p.findPeers(ep, "controller"), "http-peer", "Controller")...)
+			return out
+		}
+		if ep.Kind == "feign" {
+			return tagLocs(p.findOpposite(ep, "controller"), "feign-controller", "Controller")
 		}
 	}
 	return nil
@@ -230,12 +247,23 @@ func (p *Plugin) classifyFallback(core plugin.Core, primary *model.Symbol) *endp
 }
 
 func (p *Plugin) findOpposite(ep *endpoint, toKind string) []*model.Location {
+	return p.findMatching(ep, toKind, false)
+}
+
+func (p *Plugin) findPeers(ep *endpoint, kind string) []*model.Location {
+	return p.findMatching(ep, kind, true)
+}
+
+func (p *Plugin) findMatching(ep *endpoint, toKind string, excludeSelf bool) []*model.Location {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	var out []*model.Location
 	seen := map[string]bool{}
 	add := func(other *endpoint) {
 		if other == nil || other.Kind != toKind || other.Loc == nil {
+			return
+		}
+		if excludeSelf && other.SymbolKey == ep.SymbolKey {
 			return
 		}
 		if !methodCompatible(ep.HttpMethod, other.HttpMethod) {

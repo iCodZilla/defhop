@@ -2,8 +2,10 @@
 
 /**
  * Defhop navigation smoke tests against testdata/samples.
- * Covers: Java lang (+ lambda), Spring, Spring Cloud OpenFeign,
- * MyBatis, MyBatis-Plus, Lombok, MapStruct.
+ * Covers: Java lang (+ lambda), Spring (@Qualifier, profiles, path peers),
+ * Spring Cloud OpenFeign, MyBatis (XML + @Select), MyBatis-Plus,
+ * Lombok (Data/Builder/ctors/SuperBuilder), MapStruct, deps sources,
+ * Document Highlight.
  */
 
 const { spawn } = require("child_process");
@@ -113,7 +115,7 @@ function run() {
     }
 
     /** Retry DEF until pred matches (deps index runs after INIT returns). */
-    async function waitDef(relParts, needle, linePred, locPred, msg, attempts = 40) {
+    async function waitDef(relParts, needle, linePred, locPred, msg, attempts = 100) {
       const file = j(...relParts);
       const text = fs.readFileSync(file, "utf8");
       const pos = findPos(text, needle, linePred);
@@ -125,7 +127,7 @@ function run() {
           console.log(`DEF ${needle} @ ${relParts.join("/")} ->`, locStr(last));
           return last;
         }
-        await new Promise((r) => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 100));
       }
       console.log(`DEF ${needle} @ ${relParts.join("/")} ->`, locStr(last));
       assertSome(last, locPred, msg);
@@ -155,7 +157,7 @@ function run() {
         samples,
         "",
         "21",
-        ".git,node_modules,target,.idea,.cache",
+        ".git,node_modules,target,.idea,.cache,.defhop",
         cacheDir,
       ]);
       console.log("INIT", init.files, "files", "plugins=", init.plugins, init.milliseconds, "ms");
@@ -298,6 +300,30 @@ function run() {
         "yml key -> SampleAppConfig",
       );
 
+      // Profile-specific application-dev.yml
+      locs = await defFile(
+        ["samples", "spring", "SampleAppConfig.java"],
+        "samples.dev.banner",
+        (l) => l.includes("@Value"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("application-dev.yml"),
+        "DEF @Value samples.dev.banner -> application-dev.yml",
+      );
+
+      // @Qualifier prefers primaryPayment bean
+      locs = await defFile(
+        ["samples", "spring", "CheckoutService.java"],
+        "gateway",
+        (l) => l.includes("private PaymentGateway"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("PrimaryPaymentGateway.java"),
+        "DEF @Qualifier gateway -> PrimaryPaymentGateway",
+      );
+
       // ---- Spring Cloud OpenFeign ----
       locs = await defFile(["samples", "cloud", "OrderFeignClient.java"], "create(", (l) =>
         l.includes("Order create"),
@@ -325,6 +351,11 @@ function run() {
         (l) => (l.path || "").includes("OrderFeignClient.java"),
         "Controller create REFS includes Feign",
       );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("OrderCompatController.java"),
+        "Controller create REFS includes same-path peer",
+      );
 
       // ---- MyBatis ----
       locs = await routeFile(["samples", "mybatis", "ProductMapper.java"], "selectById");
@@ -341,6 +372,28 @@ function run() {
           (l.path || "").includes("ProductMapper.java") ||
           (l.path || "").includes("ProductMapper.xml"),
         "DEF productMapper.selectById",
+      );
+
+      // Annotation Mapper (@Select)
+      locs = await routeFile(
+        ["samples", "mybatis", "AnnotatedProductMapper.java"],
+        "findAnnotatedById",
+      );
+      assertSome(
+        locs,
+        (l) =>
+          (l.path || "").includes("AnnotatedProductMapper.java") &&
+          (l.label || "").toLowerCase().includes("select"),
+        "ROUTE @Select findAnnotatedById",
+      );
+      locs = await defFile(
+        ["samples", "mybatis", "AnnotatedProductRepository.java"],
+        "findAnnotatedById",
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("AnnotatedProductMapper.java"),
+        "DEF annotatedProductMapper.findAnnotatedById",
       );
 
       // ---- MyBatis-Plus ----
@@ -379,6 +432,58 @@ function run() {
         locs,
         (l) => (l.path || "").includes("Customer.java"),
         "DEF Lombok Customer.builder()",
+      );
+
+      // Document Highlight (same-file locals / params)
+      const custFile = j("samples", "lombokdemo", "CustomerService.java");
+      const custText = fs.readFileSync(custFile, "utf8");
+      const listPos = findPos(custText, "list", (l) => l.includes("List<Customer> list"));
+      const hl = await req("HIGHLIGHT", [custFile, String(listPos.line), String(listPos.col)]);
+      console.log("HIGHLIGHT list ->", locStr(hl.locations));
+      if (!(hl.locations || []).length) {
+        throw new Error("HIGHLIGHT list expected at least one same-file hit");
+      }
+
+      // Constructors / SuperBuilder
+      locs = await defFile(
+        ["samples", "lombokdemo", "AccountFactory.java"],
+        "Account()",
+        (l) => l.includes("new Account()"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Account.java"),
+        "DEF Lombok NoArgsConstructor new Account()",
+      );
+      locs = await defFile(
+        ["samples", "lombokdemo", "AccountFactory.java"],
+        "Account(id, code)",
+        (l) => l.includes("new Account(id, code)"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Account.java"),
+        "DEF Lombok RequiredArgsConstructor",
+      );
+      locs = await defFile(
+        ["samples", "lombokdemo", "AccountFactory.java"],
+        "Account(id, code, name)",
+        (l) => l.includes("new Account(id, code, name)"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Account.java"),
+        "DEF Lombok AllArgsConstructor",
+      );
+      locs = await defFile(
+        ["samples", "lombokdemo", "AccountFactory.java"],
+        "builder",
+        (l) => l.includes("Account.builder"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("Account.java"),
+        "DEF Lombok SuperBuilder Account.builder()",
       );
 
       // ---- MapStruct ----
@@ -426,7 +531,7 @@ function run() {
         samples,
         "",
         "21",
-        ".git,node_modules,target,.idea,.cache",
+        ".git,node_modules,target,.idea,.cache,.defhop",
         cacheDir,
       ]);
       console.log("REINDEX warm", warm.files, "files", warm.milliseconds, "ms");

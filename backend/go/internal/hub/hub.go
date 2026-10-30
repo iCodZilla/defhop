@@ -59,7 +59,8 @@ func New(plugins ...plugin.Plugin) *Hub {
 		progress: newProgressTracker(),
 		exclude: map[string]bool{
 			".git": true, ".gradle": true, ".idea": true, ".settings": true,
-			".vscode": true, "bin": true, "build": true, "classes": true,
+			".vscode": true, ".cache": true, ".defhop": true,
+			"bin": true, "build": true, "classes": true,
 			"dist": true, "logs": true, "node_modules": true, "out": true, "target": true,
 		},
 	}
@@ -679,7 +680,7 @@ func (h *Hub) scan(root string) (*model.WorkspaceFacts, []string, error) {
 		}
 	}
 
-	// Sample Java files for Detect hints ? prefer mapstruct / mapper-ish paths.
+	// Sample Java files for Detect hints — prefer mapstruct / mapper-ish paths.
 	samplePaths := pickDetectSamples(javaPaths, 60)
 	for _, p := range samplePaths {
 		data, err := os.ReadFile(p)
@@ -688,6 +689,9 @@ func (h *Hub) scan(root string) (*model.WorkspaceFacts, []string, error) {
 		}
 		sampleDetect(string(data), facts)
 	}
+	// If the sample window missed framework markers (large workspaces),
+	// scan remaining files until lombok / mapstruct hints appear.
+	ensureFrameworkDetectHints(javaPaths, samplePaths, facts)
 	return facts, javaPaths, err
 }
 
@@ -698,9 +702,12 @@ func pickDetectSamples(paths []string, limit int) []string {
 	var prefer, rest []string
 	for _, p := range paths {
 		lower := strings.ToLower(filepath.ToSlash(p))
-		if strings.Contains(lower, "mapstruct") || strings.Contains(lower, "/mapper") ||
-			strings.Contains(lower, "/provider/") || strings.Contains(lower, "feign") ||
-			strings.Contains(lower, "generated-sources") || strings.Contains(lower, "/generated/") {
+		base := strings.ToLower(filepath.Base(p))
+		// Prefer plugin-ish paths so Detect is not starved when the workspace is huge.
+		if strings.Contains(lower, "mapstruct") || strings.Contains(lower, "lombok") ||
+			strings.Contains(base, "mapper") || strings.Contains(lower, "/provider/") ||
+			strings.Contains(lower, "feign") || strings.Contains(lower, "generated-sources") ||
+			strings.Contains(lower, "/generated/") {
 			prefer = append(prefer, p)
 		} else {
 			rest = append(rest, p)
@@ -721,10 +728,13 @@ func pickDetectSamples(paths []string, limit int) []string {
 
 func sampleDetect(src string, facts *model.WorkspaceFacts) {
 	for _, a := range []string{"Mapper", "Select", "Insert", "Update", "Delete",
-		"Data", "Getter", "Setter", "Builder", "Slf4j", "Mapping", "Mappings",
+		"Data", "Getter", "Setter", "Builder", "SuperBuilder", "Slf4j",
+		"NoArgsConstructor", "AllArgsConstructor", "RequiredArgsConstructor",
+		"Mapping", "Mappings",
 		"Component", "Service", "Repository", "Controller", "RestController",
 		"Autowired", "Resource", "Bean", "Configuration", "SpringBootApplication",
-		"Value", "ConfigurationProperties", "FeignClient", "EnableFeignClients"} {
+		"Value", "ConfigurationProperties", "FeignClient", "EnableFeignClients",
+		"Qualifier"} {
 		if strings.Contains(src, "@"+a) {
 			facts.AnnotationHits[a]++
 		}
@@ -738,6 +748,61 @@ func sampleDetect(src string, facts *model.WorkspaceFacts) {
 	}
 	if strings.Contains(src, "ServiceImpl") {
 		facts.ImportHits["com.baomidou.mybatisplus"]++
+	}
+}
+
+func needsLombokHint(facts *model.WorkspaceFacts) bool {
+	if facts == nil {
+		return false
+	}
+	if facts.ImportHits["lombok."] > 0 {
+		return false
+	}
+	for _, a := range []string{"Data", "Getter", "Setter", "Builder", "SuperBuilder", "Slf4j",
+		"NoArgsConstructor", "AllArgsConstructor", "RequiredArgsConstructor"} {
+		if facts.AnnotationHits[a] > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func needsMapstructHint(facts *model.WorkspaceFacts) bool {
+	if facts == nil {
+		return false
+	}
+	if facts.ImportHits["org.mapstruct"] > 0 {
+		return false
+	}
+	return facts.AnnotationHits["Mapping"] == 0 && facts.AnnotationHits["Mappings"] == 0
+}
+
+func ensureFrameworkDetectHints(all, sampled []string, facts *model.WorkspaceFacts) {
+	if facts == nil || (!needsLombokHint(facts) && !needsMapstructHint(facts)) {
+		return
+	}
+	seen := map[string]bool{}
+	for _, p := range sampled {
+		seen[store.PathKey(p)] = true
+	}
+	for _, p := range all {
+		if !needsLombokHint(facts) && !needsMapstructHint(facts) {
+			return
+		}
+		if seen[store.PathKey(p)] {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s := string(data)
+		// Cheap gate before full sampleDetect.
+		if (needsLombokHint(facts) && (strings.Contains(s, "lombok.") || strings.Contains(s, "@Data") ||
+			strings.Contains(s, "@Builder") || strings.Contains(s, "@Getter"))) ||
+			(needsMapstructHint(facts) && (strings.Contains(s, "org.mapstruct") || strings.Contains(s, "@Mapping"))) {
+			sampleDetect(s, facts)
+		}
 	}
 }
 
@@ -1190,6 +1255,28 @@ func (h *Hub) navigateXML(req model.NavRequest, snap *store.Snapshot) []*model.L
 		}
 	}
 	return dedupe(locs)
+}
+
+// DocumentHighlights returns same-file read/write highlights for the symbol under cursor.
+func (h *Hub) DocumentHighlights(path string, line, character int) []*model.Location {
+	locs, _ := h.Navigate(model.NavRequest{
+		Kind:        model.NavRefs,
+		Path:        path,
+		Line:        line,
+		Character:   character,
+		IncludeDecl: true,
+	})
+	key := store.PathKey(path)
+	var out []*model.Location
+	for _, l := range locs {
+		if l == nil {
+			continue
+		}
+		if store.PathKey(l.Path) == key {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 func dedupe(locs []*model.Location) []*model.Location {

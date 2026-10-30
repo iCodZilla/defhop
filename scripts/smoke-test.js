@@ -18,6 +18,9 @@ if (!fs.existsSync(exe)) {
   process.exit(1);
 }
 
+// Fresh cache each run — avoid stale packed index / deps skewing smoke.
+fs.rmSync(cacheDir, { recursive: true, force: true });
+
 function b64(s) {
   return Buffer.from(String(s), "utf8").toString("base64");
 }
@@ -80,8 +83,9 @@ function run() {
     }
 
     (async () => {
-      // cold INIT
-      const init = await req("INIT", [demo, "", "21", "", cacheDir]);
+      // cold INIT — exclude cache so Detect samples workspace sources, not deps jars
+      const excludes = ".git,node_modules,target,.idea,.cache,.defhop";
+      const init = await req("INIT", [demo, "", "21", excludes, cacheDir]);
       console.log("INIT", init.files, "files", "plugins=", init.plugins);
       const plugins = init.plugins || [];
       for (const need of ["mybatis", "lombok", "spring", "mapstruct", "feign"]) {
@@ -378,7 +382,7 @@ function run() {
       }
 
       // Warm cache INIT (REINDEX)
-      const warm = await req("REINDEX", [demo, "", "21", "", cacheDir]);
+      const warm = await req("REINDEX", [demo, "", "21", excludes, cacheDir]);
       console.log("REINDEX warm", warm.files, "files", warm.milliseconds, "ms");
 
       if (!(init.files > 0)) throw new Error("no files indexed");

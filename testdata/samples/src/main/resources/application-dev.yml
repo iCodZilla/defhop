@@ -1,0 +1,8 @@
+# Profile-specific overrides — F12 on samples.dev.banner / display-name should hit here too.
+samples:
+  feature:
+    display-name: Dev Feature
+  dev:
+    banner: hello-from-dev
+  bank-import:
+    enabled: false

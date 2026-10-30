@@ -2,7 +2,7 @@
   "name": "defhop",
   "displayName": "Defhop for Java",
   "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "publisher": "vg0x00",
   "license": "MIT",
   "repository": {
@@ -144,7 +144,7 @@
         "defhop.jdkHome": {
           "type": "string",
           "default": "",
-          "markdownDescription": "JDK home directory (or path to `src.zip`) for `java.*` navigation. Priority: **workspace** → **user** setting → `JAVA_HOME`/`JDK_HOME` → auto-detect. Env/auto results are written into the workspace setting so you usually do not need to set this by hand."
+          "markdownDescription": "JDK home (or `src.zip`) for `java.*` navigation. **Project only** (workspace / folder) — User/global is ignored so local and Remote-SSH stay independent. Priority: **workspace** → `JAVA_HOME`/`JDK_HOME` → auto-detect; env/auto results are saved into the workspace setting."
         }
       }
     }

@@ -7,6 +7,8 @@ import (
 	"defhop/internal/plugin"
 	"defhop/internal/store"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -296,10 +298,10 @@ func (p *Plugin) Contribute(core plugin.Core, req model.NavRequest, primary *mod
 	switch req.Kind {
 	case model.NavDef, model.NavImpl:
 		if primary.Kind == "field" && isInjected(primary) && primary.TypeKey != "" {
-			return p.impls(core, primary.TypeKey)
+			return p.impls(core, primary.TypeKey, injectQualifier(primary))
 		}
 		if primary.Kind == "type" && primary.InterfaceType {
-			return p.impls(core, primary.Key)
+			return p.impls(core, primary.Key, "")
 		}
 		if (primary.Kind == "method" || primary.Kind == "constructor") && primary.OwnerKey != "" {
 			if owner := core.Symbol(primary.OwnerKey); owner != nil && owner.InterfaceType {
@@ -434,7 +436,24 @@ func (p *Plugin) lookupCfg(key string) []*model.Location {
 			out = append(out, l)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return configPathRank(out[i].Path) < configPathRank(out[j].Path)
+	})
 	return out
+}
+
+// configPathRank prefers base application/bootstrap over profile-specific files.
+func configPathRank(path string) int {
+	base := strings.ToLower(filepath.Base(path))
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	switch {
+	case base == "application" || base == "bootstrap":
+		return 0
+	case strings.HasPrefix(base, "application-") || strings.HasPrefix(base, "bootstrap-"):
+		return 1
+	default:
+		return 2
+	}
 }
 
 func (p *Plugin) lookupJava(key string) []*model.Location {
@@ -458,7 +477,7 @@ func (p *Plugin) lookupJava(key string) []*model.Location {
 	return out
 }
 
-func (p *Plugin) impls(core plugin.Core, typeKey string) []*model.Location {
+func (p *Plugin) impls(core plugin.Core, typeKey, qualifier string) []*model.Location {
 	p.mu.RLock()
 	keys := append([]string(nil), p.beans[typeKey]...)
 	p.mu.RUnlock()
@@ -470,12 +489,81 @@ func (p *Plugin) impls(core plugin.Core, typeKey string) []*model.Location {
 		}
 	}
 	var out []*model.Location
+	var matched []*model.Location
 	for _, k := range keys {
-		if s := core.Symbol(k); s != nil && s.Declaration != nil && !s.InterfaceType {
-			out = append(out, s.Declaration)
+		s := core.Symbol(k)
+		if s == nil || s.Declaration == nil || s.InterfaceType {
+			continue
+		}
+		out = append(out, s.Declaration)
+		if qualifier != "" && beanMatchesQualifier(s, qualifier) {
+			matched = append(matched, s.Declaration)
 		}
 	}
+	if len(matched) > 0 {
+		return matched
+	}
 	return out
+}
+
+func injectQualifier(s *model.Symbol) string {
+	if s == nil {
+		return ""
+	}
+	if q := annValue(s.Annotations, "Qualifier"); q != "" {
+		return q
+	}
+	if q := annValue(s.Annotations, "Resource"); q != "" {
+		return q
+	}
+	if q := annValue(s.Annotations, "Named"); q != "" {
+		return q
+	}
+	return ""
+}
+
+func beanMatchesQualifier(s *model.Symbol, q string) bool {
+	if s == nil || q == "" {
+		return false
+	}
+	for _, cand := range []string{
+		annValue(s.Annotations, "Qualifier"),
+		annValue(s.Annotations, "Service"),
+		annValue(s.Annotations, "Component"),
+		annValue(s.Annotations, "Repository"),
+		annValue(s.Annotations, "Controller"),
+		annValue(s.Annotations, "RestController"),
+		annValue(s.Annotations, "Named"),
+	} {
+		if cand != "" && cand == q {
+			return true
+		}
+	}
+	// Default bean name = simple type name (decapitalized).
+	simple := s.Name
+	if i := strings.LastIndexAny(simple, ".$"); i >= 0 {
+		simple = simple[i+1:]
+	}
+	if simple == q {
+		return true
+	}
+	if len(simple) > 0 {
+		decap := strings.ToLower(simple[:1]) + simple[1:]
+		if decap == q {
+			return true
+		}
+	}
+	return false
+}
+
+func annValue(anns []string, name string) string {
+	prefix := name + ":"
+	for _, a := range anns {
+		if strings.HasPrefix(a, prefix) {
+			return a[len(prefix):]
+		}
+	}
+	return ""
 }
 
 func isComponent(s *model.Symbol) bool {

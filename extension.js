@@ -637,17 +637,16 @@ class DefhopClient {
   }
 
   /**
-   * JDK path priority:
-   * 1) project (workspace / folder) setting
-   * 2) user (plugin) setting
-   * 3) JAVA_HOME / JDK_HOME / DEFHOP_JDK_HOME
-   * 4) auto-detect on disk
+   * JDK path priority (local / Remote-SSH stay independent):
+   * 1) project (workspace / folder) setting only — never User/global
+   * 2) JAVA_HOME / JDK_HOME / DEFHOP_JDK_HOME
+   * 3) auto-detect on disk
    * Env/auto hits are written into project-level defhop.jdkHome.
+   * User-level defhop.jdkHome is ignored so Settings Sync / remote cannot overwrite local.
    */
   _jdkHome() {
     if (this._resolvedJdkHome) return this._resolvedJdkHome;
-    const raw = vscode.workspace.getConfiguration("defhop").get("jdkHome", "");
-    return typeof raw === "string" ? raw.trim() : "";
+    return this._jdkInspectLayers().project;
   }
 
   _jdkInspectLayers() {
@@ -789,14 +788,11 @@ class DefhopClient {
       this.jdkStatus.show();
       return;
     }
-    const label =
-      src === "workspace"
-        ? "project"
-        : src === "user"
-          ? "user"
-          : src.startsWith("env:")
-            ? "env"
-            : src || "jdk";
+    const label = src === "workspace"
+      ? "project"
+      : src.startsWith("env:")
+        ? "env"
+        : src || "jdk";
     this.jdkStatus.text = "$(coffee)";
     this.jdkStatus.tooltip = `Defhop JDK (${label})\n${home}\n点击可重选 / 清除项目配置`;
     this.jdkStatus.backgroundColor = undefined;
@@ -852,6 +848,11 @@ class DefhopClient {
 
   async _ensureJdkHome() {
     const { project, user } = this._jdkInspectLayers();
+    if (user) {
+      this.output.appendLine(
+        `[config] ignoring user/global defhop.jdkHome (use project setting only): ${user}`,
+      );
+    }
     if (project) {
       if (this._jdkLooksValid(project)) {
         this._resolvedJdkHome = project;
@@ -861,16 +862,6 @@ class DefhopClient {
         return project;
       }
       this.output.appendLine(`[config] jdkHome workspace invalid, falling back: ${project}`);
-    }
-    if (user) {
-      if (this._jdkLooksValid(user)) {
-        this._resolvedJdkHome = user;
-        this._jdkSource = "user";
-        this.output.appendLine(`[config] jdkHome user → ${user}`);
-        this._updateJdkStatus();
-        return user;
-      }
-      this.output.appendLine(`[config] jdkHome user invalid, falling back: ${user}`);
     }
     for (const key of ["DEFHOP_JDK_HOME", "JAVA_HOME", "JDK_HOME"]) {
       const v = typeof process.env[key] === "string" ? process.env[key].trim() : "";
@@ -888,7 +879,7 @@ class DefhopClient {
     }
     this._resolvedJdkHome = "";
     this._jdkSource = "";
-    this.output.appendLine("[config] jdkHome unset (no project/user/env/auto)");
+    this.output.appendLine("[config] jdkHome unset (no project/env/auto)");
     this._updateJdkStatus();
     return "";
   }
@@ -966,18 +957,15 @@ class DefhopClient {
     const now = Date.now();
     if (this._jdkPromptAt && now - this._jdkPromptAt < 60_000) return;
     this._jdkPromptAt = now;
-    const open = "打开设置";
+    const pick = "选择 JDK / src.zip";
     vscode.window
       .showWarningMessage(
-        "无法跳转到 JDK 类型：未找到 JDK 源码。请在设置中配置 Defhop: Jdk Home（JDK 目录或 src.zip）。",
-        open,
+        "无法跳转到 JDK 类型：未找到 JDK 源码。请为当前工作区配置 Defhop: Jdk Home（只写入项目，不写全局）。",
+        pick,
       )
       .then((choice) => {
-        if (choice === open) {
-          vscode.commands.executeCommand(
-            "workbench.action.openSettings",
-            "defhop.jdkHome",
-          );
+        if (choice === pick) {
+          vscode.commands.executeCommand("defhop.configureJdk");
         }
       });
   }
@@ -985,6 +973,22 @@ class DefhopClient {
   async locations(command, document, position, timeoutMs = 3000, includeDeclaration = false) {
     const result = await this.navQuery(command, document, position, timeoutMs, includeDeclaration);
     return result.locations.length ? result.locations : undefined;
+  }
+
+  async documentHighlights(document, position) {
+    if (!this._ready) return [];
+    try {
+      await this.syncOpenBuffers(document);
+      const message = await this._doRequest(
+        "HIGHLIGHT",
+        [document.uri.fsPath, position.line, position.character],
+        5000,
+      );
+      return this._toLocations(message.locations);
+    } catch (error) {
+      this.output.appendLine(`[nav] HIGHLIGHT ${error.message}`);
+      return [];
+    }
   }
 
   _symbolKind(kind) {
@@ -1341,6 +1345,20 @@ async function activate(context) {
         },
       },
     ),
+    vscode.languages.registerDocumentHighlightProvider(selector, {
+      async provideDocumentHighlights(document, position) {
+        await client.ensureReady();
+        const locs = await client.documentHighlights(document, position);
+        if (!locs || !locs.length) return undefined;
+        return locs.map(
+          (loc) =>
+            new vscode.DocumentHighlight(
+              loc.range,
+              vscode.DocumentHighlightKind.Read,
+            ),
+        );
+      },
+    }),
     vscode.languages.registerCallHierarchyProvider(
       [{ language: "java", scheme: "file" }],
       {
@@ -1441,29 +1459,29 @@ async function activate(context) {
       const src = client._jdkSource || "none";
       const pick = "选择 JDK / src.zip";
       const clear = "清除项目配置";
-      const openSettings = "打开设置";
+      const openWorkspace = "打开工作区设置";
       const choice = await vscode.window.showQuickPick(
         [
           {
             label: pick,
             description: `当前: ${current}`,
-            detail: `来源: ${src}`,
+            detail: `来源: ${src}（仅项目配置，忽略用户全局）`,
           },
           {
             label: clear,
-            description: "删除 workspace defhop.jdkHome，再按优先级重探",
+            description: "删除项目 defhop.jdkHome，再按 env/自动探测重探",
           },
           {
-            label: openSettings,
-            description: "defhop.jdkHome",
+            label: openWorkspace,
+            description: "编辑 .vscode/settings.json 中的 defhop.jdkHome",
           },
         ],
         { title: "Defhop JDK" },
       );
       if (!choice) return;
-      if (choice.label === openSettings) {
+      if (choice.label === openWorkspace) {
         await vscode.commands.executeCommand(
-          "workbench.action.openSettings",
+          "workbench.action.openWorkspaceSettings",
           "defhop.jdkHome",
         );
         return;

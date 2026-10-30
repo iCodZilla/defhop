@@ -1,0 +1,27 @@
+---
+description: New nav features must sync samples + smoke tests
+alwaysApply: true
+---
+
+# Features ↔ samples ↔ smoke (keep in sync)
+
+Whenever Defhop gains or changes a **user-facing navigation capability**, do all three in the same change set:
+
+1. **Implement** in `backend/go` / `extension.js` as needed.
+2. **Demonstrate** in `testdata/samples` (minimal Java/yml/xml under the right package; update `testdata/samples/README.md` coverage table).
+3. **Assert** in `scripts/smoke-test-samples.js` (DEF / REFS / ROUTE / HIGHLIGHT / waitDef as appropriate).
+
+## Rules
+
+- Do **not** claim a feature in `README.md` capabilities unless samples + smoke cover it (or update all three together).
+- Prefer extending an existing samples package (`spring`, `mybatis`, `lombokdemo`, …) over a one-off file with no smoke.
+- Smoke must fail if the jump regresses: assert **from → expected path/label**, not only “some location”.
+- After sample/smoke edits: run `node .\scripts\smoke-test-samples.js` (or full `.\build.ps1`) before packaging.
+- Demo (`testdata/demo` + `scripts/smoke-test.js`) stays a smaller classic fixture; **new framework/nav features go in samples** unless they are core demo regressions.
+
+## Checklist (agent)
+
+- [ ] Sample file(s) show the jump scenario
+- [ ] `testdata/samples/README.md` lists the scenario
+- [ ] `scripts/smoke-test-samples.js` asserts it
+- [ ] Root `README.md` capabilities match (if user-facing)

@@ -211,6 +211,13 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		b, _ := json.Marshal(info)
 		return `,"hover":` + string(b), nil
 
+	case "HIGHLIGHT":
+		if len(args) < 3 {
+			return `,"locations":[]`, nil
+		}
+		locs := h.DocumentHighlights(args[0], atoi(args[1]), atoi(args[2]))
+		return `,"locations":` + locsJSON(locs), nil
+
 	case "CALLS":
 		if len(args) < 3 {
 			return `,"item":null,"incoming":[],"outgoing":[]`, nil

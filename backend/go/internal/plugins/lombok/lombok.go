@@ -19,7 +19,10 @@ func (p *Plugin) Detect(ws *model.WorkspaceFacts) bool {
 	if ws.ImportHits["lombok."] > 0 {
 		return true
 	}
-	for _, a := range []string{"Data", "Getter", "Setter", "Builder", "Slf4j", "Value", "Accessors"} {
+	for _, a := range []string{
+		"Data", "Getter", "Setter", "Builder", "SuperBuilder", "Slf4j", "Value", "Accessors",
+		"NoArgsConstructor", "AllArgsConstructor", "RequiredArgsConstructor",
+	} {
 		if ws.AnnotationHits[a] > 0 {
 			return true
 		}

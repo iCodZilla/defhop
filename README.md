@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/banner.png" alt="Defhop — Java 代码导航助手" width="720" />
+  <img src="media/banner.png" alt="Defhop — Java 代码导航助手" width="720" />
 </p>
 
 <p align="center">
@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/跳转定义-F12-007ACC?style=flat-square" alt="跳转定义" />
   <img src="https://img.shields.io/badge/查找引用-快-1B1F24?style=flat-square" alt="查找引用" />
   <img src="https://img.shields.io/badge/Spring%20%7C%20MyBatis%20%7C%20Feign-按需-00ADD8?style=flat-square" alt="框架支持" />
+  <img src="https://img.shields.io/badge/Platform-Win%20%7C%20Linux%20%7C%20macOS%20%7C%20WSL%20%7C%20Remote--SSH-2EC4B6?style=flat-square" alt="跨平台" />
 </p>
 
 <p align="center">
@@ -27,157 +28,115 @@
 
 ## 这是什么
 
-**Defhop** = **Java 助手**，专注一件事：**代码导航**。
+**Defhop** 是专注 **代码导航** 的 Java 助手：
 
-- **跳转定义**（Go to Definition / `F12`）
-- **查找引用**（Find References）
+- **跳转定义**（`F12` / `Ctrl`+点击）
+- **查找引用**
 - 方法实现、继承关系
-- MyBatis / Spring / Feign / Lombok / MapStruct 等场景的跨文件跳转
+- Spring / MyBatis / Feign / Lombok / MapStruct 等跨文件跳转
 
-适合在大项目里 **看代码、追调用、读懂别人写的逻辑**——尤其是你已经用 AI 写代码，只想要一个又快又轻的「跳过去」工具。
+适合大项目里 **看代码、追调用**——尤其是 AI 已经帮你写代码，你只想要一个又快又轻的「跳过去」工具。
 
-核心引擎用 **Go** 编写：原生多核解析 Java 源码，**不依赖 JVM** 跑语言服务，体积小、内存省、跳转快。
+引擎用 **Go** 编写：多核解析 Java，**不为导航再拉起 JVM**，体积小、内存省、跳转快。
 
-> 不做代码补全、不做重构、不做一堆 IDE 全家桶。保持精简，打开快、跳得快。
+> 不做补全、不做重构、不做 IDE 全家桶。装上就能导航。
 
-## 由来
-
-AI 时代，写代码越来越少靠人肉敲：生成、改写、补洞多半交给助手。以前视为标配的 **代码提示、重构**，反而常常变成编辑器里的负担——又重、又抢资源，还和 AI 能力大量重叠。
-
-但人还是要 **偶尔看代码**：追调用、核对实现、弄清某段逻辑从哪来。这时最需要的是轻快的 **跳转与引用**，而不是再背一整套 IDE。
-
-VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务、项目导入……），体感却仍不稳定。于是有了 **开箱即用** 的 Defhop：装上就能导航，专注读代码这一件事。
-
-想要的能力，欢迎到 GitHub **许愿 / 提 Issue**：  
-→ [github.com/iCodZilla/defhop](https://github.com/iCodZilla/defhop/issues)
+Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 
 ## 请我喝杯咖啡
 
 | 支付宝 | 微信 |
 |:---:|:---:|
-| <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/alipay.jpg" alt="支付宝收款码" width="220" /> | <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/wechat.jpg" alt="微信收款码" width="220" /> |
+| <img src="media/alipay.jpg" alt="支付宝收款码" width="220" /> | <img src="media/wechat.jpg" alt="微信收款码" width="220" /> |
 
-## 性能实测（Go 引擎）
+## 性能实测
 
-本机 Windows 实测（2026-10-27）。解析与导航均在 **Go 后端**完成；下表只按**规模**列举（多模块 Maven 工程），不含项目名称。
+本机 Windows（2026-10-27），多模块 Maven 工程，按规模列举：
 
-| 规模 | 文件 / 模块 | 冷索引 | 跳转定义 DEF | 工作集内存 | 引擎体积 |
-|------|-------------|--------|--------------|------------|----------|
-| 小型 | **~20** 个 `.java` | **~13 ms** | p95 **~1 ms** | **~14 MB** | **5.66 MB** |
-| 中型 | **~570** 个 `.java` · **~10** 个一级模块（约 **14** 个 Maven 模块） | **~0.3 s** | p95 **~2 ms** | **~70 MB** | 同上 |
-| 大型 | **~9,000** 个 `.java` · **~10** 个一级模块（约 **60** 个 Maven 模块）· ~10 万 symbols | **~9 s** | p95 **~1 ms** | **~830 MB** | 同上 |
+| 规模 | 文件 / 模块 | 冷索引 | 跳转定义 | 工作集内存 |
+|------|-------------|--------|----------|------------|
+| 小型 | **~20** 个 `.java` | **~13 ms** | p95 **~1 ms** | **~14 MB** |
+| 中型 | **~570** 个 `.java` · **~10** 个一级模块（约 **14** 个 Maven 模块） | **~0.3 s** | p95 **~2 ms** | **~70 MB** |
+| 大型 | **~9,000** 个 `.java` · **~10** 个一级模块（约 **60** 个 Maven 模块）· ~10 万 symbols | **~9 s** | p95 **~1 ms** | **~830 MB** |
 
-读法：中型仓亚秒级就绪；近万文件级约数秒完成索引；跳转保持毫秒级；内存是导航引擎占用，不是再挂一整套 JVM Language Server。
-
-## 为什么选 Defhop
-
-| 你在意的 | Defhop |
-|----------|--------|
-| **Go 解析** | 原生编译、多核吃满，不为导航再拉起 JVM |
-| **占用低** | 单引擎约数 MB～百 MB 级，见上表实测 |
-| **效率高** | 冷索引 / 热更新 / `F12` 均为毫秒～百毫秒级 |
-| **够用就好** | 只做导航，不和 AI 补全抢活 |
-| **框架懂行** | Spring、MyBatis、Feign 等按需启用 |
+引擎体积约 **5.66 MB**。中型仓亚秒就绪，近万文件约数秒索引，跳转保持毫秒级；内存是导航引擎占用，不是再挂一整套 JVM Language Server。
 
 ## 支持能力
 
-下列为导航能力（转到定义 / 查找引用等）。✅ = 已支持。框架类插件**检测到再用**，未用到的不占资源。
+导航相关（转到定义 / 查找引用等）。框架能力**按需启用**，项目没用到的不占资源。
 
-### Java 语言 / 语法
+### Java
 
-| 能力 | 状态 |
-|------|:----:|
-| 类 / 接口 / 枚举 → 定义 | ✅ |
-| 方法 / 构造 / 字段 → 定义 | ✅ |
-| 继承与实现（子类 / 接口实现） | ✅ |
-| 方法重载 | ✅ |
-| 泛型类型参数（如 `Box<T>`） | ✅ |
-| 查找引用（含声明） | ✅ |
-| 查找实现 | ✅ |
-| Lambda 表达式内局部变量 | ✅ |
-| 方法引用（`Type::method` / `Type::getXxx`） | ✅ |
-| Stream / Optional 链式中的跳转 | ✅ |
-| 包内跨文件类型解析 | ✅ |
-| 依赖库源码（JDK `src.zip` / Maven·Gradle `*-sources.jar`） | ✅ |
-| 无 sources 时二进制 `.jar` / `.class` 回退（公开 API stub） | ✅ |
-| `record` 组件 / 访问器 / 方法体 | ✅ |
+- 类 / 接口 / 枚举、方法 / 构造 / 字段 → 定义
+- 继承与实现、方法重载、泛型（如 `Box<T>`）
+- 查找引用、查找实现、同文件高亮（Document Highlight）
+- Lambda 局部变量、方法引用（`Type::method`）
+- Stream / Optional 链式跳转、包内跨文件类型
+- JDK / 依赖源码（`src.zip`、`*-sources.jar`）；无源码时从 `.jar` / `.class` 跳转公开 API
+- `record` 组件 / 访问器 / 方法体
 
 ### Spring
 
-| 能力 | 状态 |
-|------|:----:|
-| `@Service` / `@Component` / `@RestController` 类型跳转 | ✅ |
-| 注入字段 / 构造注入调用 → 实现 | ✅ |
-| `@Value("${…}")` ↔ `application.yml` / `.properties` | ✅ |
-| 嵌套占位符（如 `${spring.application.name}`） | ✅ |
-| `@ConfigurationProperties` 字段 ↔ 配置键 | ✅ |
-| 配置文件键 → Java `@Value` / 属性字段 | ✅ |
+- `@Service` / `@Component` / `@RestController` 类型跳转
+- 注入字段 / 构造注入 → 实现（支持 `@Qualifier` / 多实现优选）
+- `@Value("${…}")` ↔ `application.yml` / `application-*.yml` / `.properties`（含嵌套占位符）
+- `@ConfigurationProperties` 字段 ↔ 配置键（双向）
 
 ### Spring Cloud
 
-| 能力 | 状态 |
-|------|:----:|
-| OpenFeign `@FeignClient` 方法 → Controller | ✅ |
-| Controller 方法 → Feign 引用 | ✅ |
-| 路径变量风格映射（如 `/items/{id}/…`） | ✅ |
-| `@EnableFeignClients` 工程识别 | ✅ |
+- OpenFeign `@FeignClient` ↔ Controller（双向）
+- 同路径 Controller 互跳；路径变量风格映射（如 `/items/{id}/…`）
 
-### MyBatis
+### MyBatis / MyBatis-Plus
 
-| 能力 | 状态 |
-|------|:----:|
-| Mapper 接口方法 → XML `<select\|insert\|…>` | ✅ |
-| XML statement → Java Mapper 声明 | ✅ |
-| 业务代码中调用 Mapper 方法跳转 | ✅ |
+- Mapper 方法 ↔ XML `<select|insert|…>`（双向）
+- 注解 Mapper（`@Select` / `@Insert` / …）→ Go to MyBatis SQL
+- 业务代码中调用 Mapper 方法跳转
+- `ServiceImpl` 中 `baseMapper` → 具体 Mapper / 自定义方法
 
-### MyBatis-Plus
+### Lombok / MapStruct
 
-| 能力 | 状态 |
-|------|:----:|
-| `ServiceImpl` 中 `baseMapper` → 具体 Mapper 类型 | ✅ |
-| `baseMapper.xxx()` → Mapper 自定义方法 | ✅ |
-| `BaseMapper` / `IService` 工程检测 | ✅ |
-
-### Lombok
-
-| 能力 | 状态 |
-|------|:----:|
-| `@Data` / `@Getter` / `@Setter` 生成访问器可导航 | ✅ |
-| `@Builder` 相关成员导航 | ✅ |
-| 方法引用中的 Lombok getter（如 `Customer::getName`） | ✅ |
-
-### MapStruct
-
-| 能力 | 状态 |
-|------|:----:|
-| `@Mapper` 接口方法 → 生成/手写 Impl | ✅ |
-| `@Mapping(target = "…")` → DTO / 实体字段 | ✅ |
-
-> 仓库内 `testdata/samples` 覆盖上述能力的冒烟用例（含 lambda）。
+- `@Data` / `@Getter` / `@Setter` / `@Builder` / `@SuperBuilder` 生成成员可导航
+- `@NoArgsConstructor` / `@RequiredArgsConstructor` / `@AllArgsConstructor` 构造器可导航
+- 方法引用中的 Lombok getter（如 `Customer::getName`）
+- `@Mapper` 方法 → Impl；`@Mapping(target = "…")` → 字段
 
 ## 怎么用
 
 1. 从扩展市场安装 **Defhop for Java**，重新加载窗口  
-2. 打开你的 **Maven / Gradle Java 项目**  
-3. 看右下角索引进度，完成后即可导航  
-4. 光标放在符号上 → **`F12` 跳转定义**，或右键 **查找引用**
+2. 打开 **Maven / Gradle** Java 项目  
+3. 等待右下角索引完成  
+4. 符号上 **`F12`** 或 **`Ctrl`+点击** 跳转定义，或右键 **查找引用**
 
-常用命令（命令面板搜 `Defhop`）：
+命令面板搜 `Defhop`：
 
-- **Refresh Index (keep cache)** — 刷新索引（保留磁盘缓存，只重解析变更）  
-- **Clear Cache and Rebuild** — 删除缓存后全量重建  
-- **Settings / 状态栏 → Defhop JDK** — 指定 JDK 或 `src.zip`（项目 → 用户 → 环境变量 → 自动探测；可点状态栏重选/清除）  
-- **Go to MyBatis SQL** — 从 Java 跳到 Mapper XML  
-- **Go to Java Declaration** — 从 XML 跳回 Java  
+- **Refresh Index** — 刷新索引（保留缓存）  
+- **Clear Cache and Rebuild** — 清缓存后全量重建  
+- **Defhop JDK**（设置 / 状态栏）— 为本工作区指定 JDK，便于 `java.*` 跳转  
+- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML  
 
-## 和「大型 Java 插件」的区别
+仓库内 `testdata/samples` 覆盖上表能力的可跳转示例（含 Lombok 构造器、`@Select`、`@Qualifier`、多环境配置、同路径 Controller 等），说明见该目录 README。
+
+## 反馈与许愿
+
+新特性、跳转不准、找不到引用等，请到 GitHub [提 Issue](https://github.com/iCodZilla/defhop/issues)：
+
+- **简单问题**：截图或几句话说明即可（在哪按了 `F12` / `Ctrl`+点击、期望去哪、实际怎样）。
+- **复杂问题 / 新场景**：尽量给**最小可复现**——小示例项目或几段关键代码，并写清：
+  - **从哪里**（文件 / 符号 / 光标位置）
+  - **应该跳到哪里**（目标文件 / 方法 / 配置键 / XML id …）
+  - **实际跳到了哪里**（或没有跳转）
+
+越具体越好修；有「从 → 到」对照，优先处理。
+
+## 和大型 Java 插件的区别
 
 | | 传统 Java 套件 | Defhop |
 |--|----------------|--------|
-| 定位 | 补全 + 重构 + 调试 + … | **Java 导航助手** |
-| 引擎 | 常依赖 JVM Language Server | **Go 原生解析**，无 JVM |
-| 体感 | 功能全，往往更重 | 功能少，专注速度 |
-| AI 时代 | 大量能力和 AI 重叠 | **互补**：AI 负责写，Defhop 负责读与跳 |
+| 定位 | 补全 + 重构 + 调试 + … | **只做导航** |
+| 引擎 | 常依赖 JVM Language Server | **Go 原生解析** |
+| 体感 | 功能全，往往更重 | 轻、快 |
+| AI 时代 | 与助手能力大量重叠 | **互补**：AI 写，Defhop 跳 |
 
 ---
 
@@ -185,152 +144,120 @@ VS Code 里常见的 Java 跳转往往要 **复杂配置**（JDK、语言服务�
 
 ## What it is
 
-**Defhop** is a **Java navigation helper**: Go to Definition, Find References, implementations, and smart jumps across Spring / MyBatis / Feign / Lombok / MapStruct.
+**Defhop** is a **Java navigation helper**:
 
-The indexer and navigation engine are written in **Go**—native multi-core parsing, **no JVM** required to run the nav backend. Small binary, low RAM, fast hops.
+- Go to Definition (`F12` / `Ctrl`+click)
+- Find References
+- Implementations & inheritance
+- Cross-file jumps for Spring / MyBatis / Feign / Lombok / MapStruct
 
 Built for **reading code** in large repos—especially when AI already writes the code and you just need to hop around fast.
 
-> No completion. No refactoring. No full IDE suite. Just navigation—fast and lean.
+The engine is **Go**: multi-core Java parsing, **no JVM** just to navigate. Small binary, low RAM, fast hops.
 
-## Why it exists
+> No completion. No refactoring. No full IDE suite. Install and navigate.
 
-In the AI era, people write far less code by hand—assistants draft, rewrite, and patch. Features that once felt essential—**completion and refactoring**—often become dead weight: heavy, resource-hungry, and largely overlapping with AI.
-
-You still need to **read code** sometimes: follow a call, check an implementation, see where logic comes from. What you want then is snappy **go-to-definition / references**, not another full IDE stacked on VS Code.
-
-Stock Java navigation in VS Code usually means **painful setup** (JDK, language server, project import…) with uneven results. **Defhop** is the out-of-the-box alternative: install and navigate—built only for reading code.
-
-Wish-list welcome on GitHub:  
-→ [github.com/iCodZilla/defhop](https://github.com/iCodZilla/defhop/issues)
+Works on Windows / Linux / macOS / WSL / Remote-SSH.
 
 ## Buy me a coffee
 
 | Alipay | WeChat Pay |
 |:---:|:---:|
-| <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/alipay.jpg" alt="Alipay QR" width="220" /> | <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/wechat.jpg" alt="WeChat QR" width="220" /> |
+| <img src="media/alipay.jpg" alt="Alipay QR" width="220" /> | <img src="media/wechat.jpg" alt="WeChat QR" width="220" /> |
 
-## Benchmarks (Go engine)
+## Benchmarks
 
-Measured on Windows (2026-10-27). Parsing & navigation run in the **Go backend**. Rows are by **scale only** (multi-module Maven workspaces)—no project names.
+Measured on Windows (2026-10-27), multi-module Maven workspaces by scale:
 
-| Scale | Files / modules | Cold index | Go to Definition | Working set | Engine binary |
-|-------|-----------------|------------|------------------|-------------|---------------|
-| Small | **~20** `.java` | **~13 ms** | p95 **~1 ms** | **~14 MB** | **5.66 MB** |
-| Medium | **~570** `.java` · **~10** top-level modules (~**14** Maven modules) | **~0.3 s** | p95 **~2 ms** | **~70 MB** | same |
-| Large | **~9,000** `.java` · **~10** top-level modules (~**60** Maven modules) · ~100k symbols | **~9 s** | p95 **~1 ms** | **~830 MB** | same |
+| Scale | Files / modules | Cold index | Go to Definition | Working set |
+|-------|-----------------|------------|------------------|-------------|
+| Small | **~20** `.java` | **~13 ms** | p95 **~1 ms** | **~14 MB** |
+| Medium | **~570** `.java` · **~10** top-level modules (~**14** Maven modules) | **~0.3 s** | p95 **~2 ms** | **~70 MB** |
+| Large | **~9,000** `.java` · **~10** top-level modules (~**60** Maven modules) · ~100k symbols | **~9 s** | p95 **~1 ms** | **~830 MB** |
 
-Takeaway: medium repos are ready in under a second; ~10k-file workspaces index in a few seconds; jumps stay around **1–2 ms**; RAM is the nav engine—not a second full JVM language server.
-
-## Why Defhop
-
-| You care about | Defhop |
-|----------------|--------|
-| **Go parser** | Native, multi-core—no JVM just to navigate |
-| **Low footprint** | Single-digit to low-hundreds MB—see table |
-| **High throughput** | Cold / warm / `F12` in ms–hundreds of ms |
-| **Stay lean** | Navigation only—won't fight your AI assistant |
-| **Frameworks** | Spring, MyBatis, Feign… on demand |
+Engine binary ≈ **5.66 MB**. Medium repos ready in under a second; ~10k-file workspaces index in a few seconds; jumps stay around **1–2 ms**. RAM is the nav engine—not a second JVM language server.
 
 ## Capabilities
 
-Navigation features below (Go to Definition / Find References, etc.). ✅ = supported. Framework plugins load **on demand**.
+Navigation only (Go to Definition / Find References, etc.). Framework support loads **on demand**.
 
-### Java language / syntax
+### Java
 
-| Feature | |
-|---------|:-:|
-| Class / interface / enum → definition | ✅ |
-| Method / constructor / field → definition | ✅ |
-| Inheritance & implementations | ✅ |
-| Method overloads | ✅ |
-| Generics (e.g. `Box<T>`) | ✅ |
-| Find references (incl. declaration) | ✅ |
-| Find implementations | ✅ |
-| Locals inside lambdas | ✅ |
-| Method references (`Type::method` / `Type::getXxx`) | ✅ |
-| Jumps inside Stream / Optional chains | ✅ |
-| Cross-file types in the package | ✅ |
-| Dependency sources (JDK `src.zip` / Maven·Gradle `*-sources.jar`) | ✅ |
-| Binary `.jar` fallback when sources are missing (public API stubs) | ✅ |
-| `record` components / accessors / body methods | ✅ |
+- Class / interface / enum, method / ctor / field → definition
+- Inheritance, overloads, generics (e.g. `Box<T>`)
+- Find references, implementations, document highlight
+- Locals in lambdas, method references (`Type::method`)
+- Stream / Optional chains, cross-file types in the package
+- JDK / dependency sources (`src.zip`, `*-sources.jar`); public API from `.jar` / `.class` when sources are missing
+- `record` components / accessors / body methods
 
 ### Spring
 
-| Feature | |
-|---------|:-:|
-| `@Service` / `@Component` / `@RestController` type jumps | ✅ |
-| Injected field / ctor calls → implementation | ✅ |
-| `@Value("${…}")` ↔ `application.yml` / `.properties` | ✅ |
-| Nested placeholders (e.g. `${spring.application.name}`) | ✅ |
-| `@ConfigurationProperties` field ↔ config key | ✅ |
-| Config key → Java `@Value` / property field | ✅ |
+- `@Service` / `@Component` / `@RestController` type jumps
+- Injected field / ctor → implementation (honors `@Qualifier`)
+- `@Value("${…}")` ↔ `application.yml` / `application-*.yml` / `.properties` (incl. nested placeholders)
+- `@ConfigurationProperties` field ↔ config key (both ways)
 
 ### Spring Cloud
 
-| Feature | |
-|---------|:-:|
-| OpenFeign `@FeignClient` method → Controller | ✅ |
-| Controller method → Feign references | ✅ |
-| Path-variable style mappings | ✅ |
-| `@EnableFeignClients` project detection | ✅ |
+- OpenFeign `@FeignClient` ↔ Controller (both ways)
+- Same-path Controller peers; path-variable style mappings
 
-### MyBatis
+### MyBatis / MyBatis-Plus
 
-| Feature | |
-|---------|:-:|
-| Mapper method → XML `<select\|insert\|…>` | ✅ |
-| XML statement → Java Mapper | ✅ |
-| Calls to Mapper methods in business code | ✅ |
+- Mapper method ↔ XML `<select|insert|…>` (both ways)
+- Annotation mappers (`@Select` / `@Insert` / …) via Go to MyBatis SQL
+- Calls to Mapper methods in business code
+- `baseMapper` in `ServiceImpl` → concrete Mapper / custom methods
 
-### MyBatis-Plus
+### Lombok / MapStruct
 
-| Feature | |
-|---------|:-:|
-| `baseMapper` in `ServiceImpl` → concrete Mapper | ✅ |
-| `baseMapper.xxx()` → custom Mapper method | ✅ |
-| `BaseMapper` / `IService` detection | ✅ |
-
-### Lombok
-
-| Feature | |
-|---------|:-:|
-| `@Data` / `@Getter` / `@Setter` generated accessors | ✅ |
-| `@Builder` member navigation | ✅ |
-| Lombok getters in method refs (e.g. `Customer::getName`) | ✅ |
-
-### MapStruct
-
-| Feature | |
-|---------|:-:|
-| `@Mapper` method → generated / hand-written Impl | ✅ |
-| `@Mapping(target = "…")` → DTO / entity field | ✅ |
-
-> See `testdata/samples` for smoke coverage (including lambdas).
+- `@Data` / `@Getter` / `@Setter` / `@Builder` / `@SuperBuilder` generated members
+- `@NoArgsConstructor` / `@RequiredArgsConstructor` / `@AllArgsConstructor`
+- Lombok getters in method refs (e.g. `Customer::getName`)
+- `@Mapper` method → Impl; `@Mapping(target = "…")` → field
 
 ## How to use
 
 1. Install **Defhop for Java** and reload  
 2. Open a **Maven / Gradle** Java workspace  
 3. Wait for the status-bar index  
-4. **`F12`** / Find References  
+4. **`F12`** or **`Ctrl`+click** / Find References 
 
-Command Palette → search `Defhop` for **Refresh Index**, **Clear Cache and Rebuild**, and MyBatis ↔ Java routes.  
-Settings → **Defhop: Jdk Home** for `java.*` navigation (workspace → user → env → auto-detect; env/auto are saved to the workspace setting).
+Command Palette → `Defhop`:
+
+- **Refresh Index** — refresh (keep cache)  
+- **Clear Cache and Rebuild** — full rebuild  
+- **Defhop JDK** (settings / status bar) — set JDK for this workspace (`java.*` jumps)  
+- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML  
+
+See `testdata/samples` for jump fixtures covering the features above (Lombok ctors, `@Select`, `@Qualifier`, profile configs, path-peer Controllers, …).
+
+## Feedback & requests
+
+Feature ideas and navigation bugs: [GitHub Issues](https://github.com/iCodZilla/defhop/issues).
+
+- **Simple**: a screenshot or a short note (where you used `F12` / `Ctrl`+click, what you expected, what happened).
+- **Complex / new scenarios**: a **minimal repro**—small sample project or a few key snippets—and spell out:
+  - **From** (file / symbol / cursor)
+  - **Should jump to** (file / method / config key / XML id …)
+  - **Actually jumped to** (or no jump)
+
+Clear from → to cases get fixed first.
 
 ## vs full Java packs
 
 | | Classic Java packs | Defhop |
 |--|--------------------|--------|
-| Role | Full IDE features | **Java navigation helper** |
-| Engine | Often a JVM language server | **Go-native parser**, no JVM |
-| Feel | Complete, often heavy | Focused, fast |
+| Role | Completion + refactor + debug + … | **Navigation only** |
+| Engine | Often a JVM language server | **Go-native parser** |
+| Feel | Complete, often heavy | Lean and fast |
 | AI era | Overlaps assistants | **Complement**: AI writes, Defhop jumps |
 
 ---
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/iCodZilla/defhop/main/media/icon.png" alt="Defhop" width="64" /><br/>
+  <img src="media/icon.png" alt="Defhop" width="64" /><br/>
   <sub>Defhop for Java · Java 导航 · 跳转定义 · 查找引用</sub><br/>
   <sub><a href="https://github.com/iCodZilla/defhop/issues">GitHub 许愿 / Feature requests</a></sub>
 </p>

@@ -1,0 +1,6 @@
+# Gradle Version Catalog fixture — Defhop discovers coords for dependency sources.
+[versions]
+exampleLib = "1.0.0"
+
+[libraries]
+libdemo = { module = "com.example:libdemo", version.ref = "exampleLib" }

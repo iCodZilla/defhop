@@ -24,7 +24,17 @@ Cross-compiles backends into `backend\`:
 Then runs:
 
 - `scripts\smoke-test.js` — classic `testdata/demo` fixtures  
-- `scripts\smoke-test-samples.js` — `testdata/samples` (Java lang + lambda, Spring, Spring Cloud OpenFeign, MyBatis, MyBatis-Plus, Lombok, MapStruct, dependency sources.jar)
+- `scripts\smoke-test-samples.js` — `testdata/samples` (all user-facing nav capabilities)
+
+### Feature sync (required)
+
+New or changed **navigation features** must land together:
+
+1. Code (`backend/go`, `extension.js`, …)
+2. Fixture in `testdata/samples` + row in `testdata/samples/README.md`
+3. Assertion in `scripts/smoke-test-samples.js`
+
+Do not document a capability in root `README.md` without samples + smoke. Full rule: `.cursor/rules/feature-samples-smoke.mdc`.
 
 ## Performance numbers (for README)
 

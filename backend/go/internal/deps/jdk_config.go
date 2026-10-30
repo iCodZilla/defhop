@@ -9,7 +9,7 @@ import (
 
 var (
 	jdkHomeMu         sync.RWMutex
-	jdkHomePref       string // explicit preference (project/user setting via extension)
+	jdkHomePref       string // explicit preference (project setting via extension)
 	jdkAutoDiscoverOn = true
 )
 

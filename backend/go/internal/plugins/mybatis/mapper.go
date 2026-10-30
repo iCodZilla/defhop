@@ -280,9 +280,27 @@ var sqlAnnotations = map[string]bool{
 
 func HasSQLAnnotation(anns []string) bool {
 	for _, a := range anns {
-		if sqlAnnotations[strings.ToLower(a)] {
+		base := a
+		if i := strings.IndexByte(a, ':'); i >= 0 {
+			base = a[:i]
+		}
+		if sqlAnnotations[strings.ToLower(base)] {
 			return true
 		}
 	}
 	return false
+}
+
+func SQLAnnotationLabel(anns []string) string {
+	for _, a := range anns {
+		base := a
+		if i := strings.IndexByte(a, ':'); i >= 0 {
+			base = a[:i]
+		}
+		low := strings.ToLower(base)
+		if sqlAnnotations[low] {
+			return "@" + base
+		}
+	}
+	return "@SQL"
 }
