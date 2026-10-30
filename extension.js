@@ -287,7 +287,7 @@ class DefhopClient {
   constructor(context) {
     this.context = context;
     this.output = vscode.window.createOutputChannel("Defhop");
-    // Only right-corner Defhop badge (spin vs check). No left-side step text.
+    // Right-corner: built-in spin while busy, check when ready. No left step text.
     this.status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
     this.status.command = "defhop.status";
     this.status.tooltip = "Defhop";
@@ -490,10 +490,10 @@ class DefhopClient {
   }
 
   /**
-   * Right-corner Defhop badge — only the leading icon changes:
-   *   $(sync~spin) Defhop  → indexing / catching up (codicon animates)
-   *   $(check) Defhop      → synced, OK to navigate
-   *   $(error) Defhop      → backend failed
+   * Right-corner Defhop badge:
+   *   $(sync~spin) → indexing / catching up (VS Code animates)
+   *   $(check)     → synced
+   *   $(error)     → backend failed
    */
   _setStatusMode(mode, detail) {
     this._statusMode = mode;
@@ -506,7 +506,6 @@ class DefhopClient {
       return;
     }
     if (mode === "loading" || mode === "sync") {
-      // Same spinning badge for init build and live catch-up — stays "Defhop".
       this.status.text = "$(sync~spin) Defhop";
       if (mode === "loading") {
         const pct = Math.max(0, Math.min(100, Math.floor(this._displayPct || 0)));
