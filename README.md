@@ -70,7 +70,7 @@ Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 ### Java
 
 - 类 / 接口 / 枚举、方法 / 构造 / 字段 → 定义
-- 继承与实现、方法重载、泛型（如 `Box<T>`）
+- 继承与实现、方法重载、泛型（如 `Box<T>`；`List<Foo>` 中的 `Foo` 可直达）
 - 查找引用、查找实现、同文件高亮（Document Highlight）
 - Lambda 局部变量、方法引用（`Type::method`）
 - Stream / Optional 链式跳转、包内跨文件类型
@@ -189,7 +189,7 @@ Listed **by component**; keep this list (EN + 中文), `testdata/samples`, and `
 ### Java
 
 - Class / interface / enum, method / ctor / field → definition
-- Inheritance, overloads, generics (e.g. `Box<T>`)
+- Inheritance, overloads, generics (e.g. `Box<T>`; `Foo` in `List<Foo>` jumps directly)
 - Find references, implementations, document highlight
 - Locals in lambdas, method references (`Type::method`)
 - Stream / Optional chains, cross-file types in the package

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.11] - 2026-11-04
+
+### Fixed
+- **Generic type-arg DEF** — F12 on `Foo` in `List<Foo>` / nested fields jumps to `Foo` (was wrongly bound to `List`, causing wrong/ambiguous picks). Prefer same-package type when simple names collide.
+
 ## [1.0.10] - 2026-10-30
 
 ### Fixed

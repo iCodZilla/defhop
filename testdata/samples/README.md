@@ -8,7 +8,7 @@ Covers:
 
 | Area | What to try |
 |------|-------------|
-| **lang** | classes, interfaces, generics, overloads, enums, records, lambda, method refs |
+| **lang** | classes, interfaces, generics (`List<ItemDto>` type-arg DEF), overloads, enums, records, lambda, method refs |
 | **deps** | F12 into `.defhop-deps/*-sources.jar` |
 | **spring** | `@Service` / `@RestController` / `@Value` / `@ConfigurationProperties` |
 | **spring** | `@Qualifier("primaryPayment")` → `PrimaryPaymentGateway` |

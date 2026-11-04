@@ -203,6 +203,22 @@ function run() {
       locs = await defFile(["samples", "lang", "LangDemo.java"], "add(1, 2)");
       assertSome(locs, (l) => (l.path || "").includes("Overloads.java"), "DEF overloads.add");
 
+      // List<ItemDto> / nested List<StoreDto> — type-arg DEF must be unique & correct
+      locs = await defFile(["samples", "lang", "GenericHolder.java"], "ItemDto", (l) =>
+        l.includes("List<ItemDto>"),
+      );
+      assertSome(locs, (l) => (l.path || "").includes("ItemDto.java"), "DEF List<ItemDto> arg");
+      if (locs.length !== 1) {
+        throw new Error("DEF List<ItemDto> should be unique, got " + locs.length);
+      }
+      locs = await defFile(["samples", "lang", "ItemDto.java"], "StoreDto", (l) =>
+        l.includes("List<StoreDto>"),
+      );
+      assertSome(locs, (l) => (l.path || "").includes("StoreDto.java"), "DEF List<StoreDto> arg");
+      if (locs.length !== 1) {
+        throw new Error("DEF List<StoreDto> should be unique, got " + locs.length);
+      }
+
       locs = await defFile(["samples", "lang", "LangDemo.java"], "Status.ACTIVE");
       assertSome(locs, (l) => (l.path || "").includes("Status.java"), "DEF Status.ACTIVE");
 

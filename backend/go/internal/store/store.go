@@ -233,7 +233,8 @@ func normalizeTypeKey(snap *Snapshot, key string, imports []string) string {
 	if _, ok := snap.SymTab[key]; ok {
 		return key
 	}
-	simple := simpleName(strings.TrimPrefix(key, "T|"))
+	raw := strings.TrimPrefix(key, "T|")
+	simple := simpleName(raw)
 	for _, imp := range imports {
 		clean := strings.TrimSuffix(imp, ".*")
 		if strings.HasSuffix(clean, "."+simple) {
@@ -248,6 +249,16 @@ func normalizeTypeKey(snap *Snapshot, key string, imports []string) string {
 		return cands[0]
 	}
 	if len(cands) > 1 {
+		// Prefer same-package when key was package-qualified or looks local.
+		pkgHint := packageOf(raw)
+		if pkgHint != "" {
+			want := "T|" + pkgHint + "." + simple
+			for _, c := range cands {
+				if c == want {
+					return c
+				}
+			}
+		}
 		for _, c := range cands {
 			pkg := packageOf(strings.TrimPrefix(c, "T|"))
 			for _, imp := range imports {

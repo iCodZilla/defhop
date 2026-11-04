@@ -464,6 +464,10 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 		r.Symbols = append(r.Symbols, sy)
 		r.Occs = append(r.Occs, &model.Occ{Start: nmTok.a, End: nmTok.b, Location: l,
 			Role: "declaration", Name: nm, TargetKey: mkey})
+		// Return type refs: List AND Foo in "List<Foo> m()".
+		if kind == "method" && nameIdx > 0 {
+			r.addTypeHeadRefs(head[:nameIdx], p, source, imps)
+		}
 
 		if hasMapping(anns) {
 			r.addMapStructProps(p, source, memberStart, nmTok.a, ft, params, imps)
@@ -504,11 +508,9 @@ func (r *parseResult) member(tk tok, z *lx, p, source, typeKey string,
 	r.Symbols = append(r.Symbols, sy)
 	r.Occs = append(r.Occs, &model.Occ{Start: nmTok.a, End: nmTok.b, Location: l,
 		Role: "declaration", Name: nm, TargetKey: fkey})
-	// Type name in "private Foo bar" → reference Occ so F12 on Foo works.
-	if typeTok := lastTypeID(head[:nameIdx]); typeTok != nil && ft != "" {
-		tl := locAt(p, source, typeTok.a, typeTok.b, "type", typeTok.s)
-		r.Occs = append(r.Occs, &model.Occ{Start: typeTok.a, End: typeTok.b, Location: tl,
-			Role: "reference", Name: typeTok.s, TargetKey: ftk})
+	// Field type refs: List AND Foo in "private List<Foo> bar" (not last-ID→List).
+	if nameIdx > 0 {
+		r.addTypeHeadRefs(head[:nameIdx], p, source, imps)
 	}
 	if tk.t == tASGN {
 		tk = skInit(z, tk)
@@ -783,14 +785,43 @@ func (r *parseResult) readTypeArgs(z *lx, tk tok, p, source string, imps []strin
 	return args, tk
 }
 
-func lastTypeID(head []tok) *tok {
-	for i := len(head) - 1; i >= 0; i-- {
-		if head[i].t == tID {
-			t := head[i]
-			return &t
+// addTypeHeadRefs emits F12 Occs for every type name in a field/return type head,
+// including generic args: List<Foo> → Occ(List)+Occ(Foo) with correct TargetKeys.
+// (Previously lastTypeID bound Foo's span to List's key → wrong / ambiguous DEF.)
+func (r *parseResult) addTypeHeadRefs(head []tok, p, source string, imps []string) {
+	for i := 0; i < len(head); {
+		t := head[i]
+		switch t.t {
+		case tLT, tGT, tCOMMA, tLBR, tRBR:
+			i++
+			continue
+		case tID:
+			off := t.a
+			var b strings.Builder
+			b.WriteString(t.s)
+			i++
+			for i < len(head) && head[i].t == tDOT {
+				i++
+				if i < len(head) && head[i].t == tID {
+					b.WriteByte('.')
+					b.WriteString(head[i].s)
+					i++
+				}
+			}
+			name := b.String()
+			simple := name
+			if d := strings.LastIndex(simple, "."); d >= 0 {
+				simple = simple[d+1:]
+			}
+			if simple == "" || simple[0] < 'A' || simple[0] > 'Z' {
+				continue
+			}
+			r.addTypeRef(name, "T|"+ql(name, r.Package, imps), off, p, source)
+			// Do not skip <...>: nested args (Foo in List<Foo>) are emitted next.
+		default:
+			i++
 		}
 	}
-	return nil
 }
 
 func ql(name, pkg string, imps []string) string {

@@ -54,7 +54,18 @@ func Resolve(snap *store.Snapshot, fd *model.FileSlice, offset int, token, sourc
 	}
 	if occ.TargetKey != "" && !IsLocalKey(occ.TargetKey) {
 		if sym := snap.SymTab[occ.TargetKey]; sym != nil {
-			return sym, occ.TargetKey
+			// Reject stale bindings where Occ name disagrees with target
+			// (e.g. List<Foo> once bound Foo's span to List).
+			if occ.Name == "" || sym.Name == occ.Name ||
+				strings.HasSuffix(strings.TrimPrefix(occ.TargetKey, "T|"), "."+occ.Name) ||
+				strings.HasSuffix(occ.TargetKey, "|"+occ.Name) {
+				return sym, occ.TargetKey
+			}
+		}
+		if occ.Name != "" && occ.Name[0] >= 'A' && occ.Name[0] <= 'Z' {
+			if q := snap.ResolveTypeKey("T|"+occ.Name, fd); snap.SymTab[q] != nil {
+				return snap.SymTab[q], q
+			}
 		}
 	}
 
