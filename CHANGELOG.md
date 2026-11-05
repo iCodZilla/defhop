@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.13] - 2026-11-05
+
+### Fixed
+- **MyBatis `<include refid>`** — F12 on an `<include>` jumps to the referenced `<sql id>` fragment, both same-file and namespace-qualified (`com.example.Mapper.fragment`); unsaved XML buffers are re-parsed before resolving.
+
 ## [1.0.12] - 2026-11-05
 
 ### Added

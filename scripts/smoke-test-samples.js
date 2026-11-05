@@ -381,6 +381,17 @@ function run() {
         "ROUTE selectById -> XML",
       );
 
+      locs = await defFile(
+        ["..", "resources", "mapper", "ProductMapper.xml"],
+        'refid="Base_Column_List"',
+        (l) => l.includes("<include"),
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("ProductMapper.xml"),
+        "DEF include refid -> <sql>",
+      );
+
       locs = await defFile(["samples", "mybatis", "ProductRepository.java"], "selectById");
       assertSome(
         locs,

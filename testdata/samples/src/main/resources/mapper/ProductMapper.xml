@@ -2,8 +2,12 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="samples.mybatis.ProductMapper">
+    <sql id="Base_Column_List">
+        id, amount, status
+    </sql>
+
     <select id="selectById" resultType="samples.lang.Order">
-        SELECT id, amount, status FROM orders WHERE id = #{id}
+        SELECT <include refid="Base_Column_List"/> FROM orders WHERE id = #{id}
     </select>
 
     <insert id="insertOrder">

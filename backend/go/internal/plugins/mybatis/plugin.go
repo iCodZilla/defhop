@@ -221,7 +221,7 @@ func discover(ws *model.WorkspaceFacts) []string {
 func (p *Plugin) add(m *Mapper) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	key := strings.ToLower(m.Path)
+	key := store.PathKey(m.Path)
 	if old, ok := p.byPath[key]; ok {
 		p.detachLocked(old)
 	}
@@ -250,7 +250,7 @@ func (p *Plugin) OnFileChanged(ev plugin.ChangeEvent) {
 			return
 		}
 		p.mu.Lock()
-		key := strings.ToLower(filepath.ToSlash(ev.Path))
+		key := store.PathKey(ev.Path)
 		if old, ok := p.byPath[key]; ok {
 			p.detachLocked(old)
 			delete(p.byPath, key)
@@ -435,10 +435,11 @@ func (p *Plugin) fromXML(core plugin.Core, req model.NavRequest) []*model.Locati
 	p.mu.RLock()
 	m := p.byPath[key]
 	p.mu.RUnlock()
-	if m == nil {
-		m = ParseMapper(req.Path, req.Text)
-		if m != nil {
-			p.add(m)
+	// Prefer the live buffer when it differs from the indexed text (unsaved edits).
+	if m == nil || (req.Text != "" && m.Text != req.Text) {
+		if fresh := ParseMapper(req.Path, req.Text); fresh != nil {
+			m = fresh
+			p.add(fresh)
 		}
 	}
 	if m == nil {
@@ -452,6 +453,11 @@ func (p *Plugin) fromXML(core plugin.Core, req model.NavRequest) []*model.Locati
 			}
 		}
 	}
+	for _, inc := range m.Includes {
+		if offset >= inc.TagStart && offset <= inc.TagEnd {
+			return p.resolveInclude(m, inc.RefID)
+		}
+	}
 	for _, stmt := range m.Statements {
 		if offset >= stmt.TagStart && offset <= stmt.TagEnd {
 			return methodsFor(core, m.Namespace, stmt.ID)
@@ -463,6 +469,37 @@ func (p *Plugin) fromXML(core plugin.Core, req model.NavRequest) []*model.Locati
 		}
 	}
 	return nil
+}
+
+// resolveInclude maps <include refid="…"/> to the matching <sql id="…"/>.
+// refid is either local (Base_Column_List) or namespace-qualified
+// (com.example.ProductMapper.Base_Column_List).
+func (p *Plugin) resolveInclude(cur *Mapper, refID string) []*model.Location {
+	refID = strings.TrimSpace(refID)
+	if refID == "" || strings.Contains(refID, "${") {
+		return nil
+	}
+	namespace, id := cur.Namespace, refID
+	if i := strings.LastIndex(refID, "."); i > 0 {
+		namespace, id = refID[:i], refID[i+1:]
+	}
+	var out []*model.Location
+	collect := func(m *Mapper) {
+		for _, s := range m.Statements {
+			if s.Tag == "sql" && s.ID == id && s.Location != nil {
+				out = append(out, s.Location)
+			}
+		}
+	}
+	collect(cur)
+	p.mu.RLock()
+	for _, m := range p.byNamespace[namespace] {
+		if m != cur {
+			collect(m)
+		}
+	}
+	p.mu.RUnlock()
+	return out
 }
 
 func resolveType(core plugin.Core, name string) *model.Symbol {

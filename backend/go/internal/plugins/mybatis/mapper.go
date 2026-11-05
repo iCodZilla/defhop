@@ -11,7 +11,17 @@ import (
 
 type Statement struct {
 	ID       string
+	Tag      string // lower-case tag name (select/insert/sql/…)
 	Location *model.Location
+	TagStart int
+	TagEnd   int
+}
+
+// Include is one <include refid="…"/> reference inside a mapper XML.
+type Include struct {
+	RefID    string
+	Start    int // refid attribute value offsets
+	End      int
 	TagStart int
 	TagEnd   int
 }
@@ -27,6 +37,7 @@ type Mapper struct {
 	NsStart    int
 	NsEnd      int
 	Statements []*Statement
+	Includes   []*Include
 	TypeTokens []*TypeToken
 	Text       string
 }
@@ -58,7 +69,16 @@ func ParseMapper(filePath, text string) *Mapper {
 		if statementTags[lower] {
 			if id := findAttr(attrs, "id"); id != nil {
 				m.Statements = append(m.Statements, &Statement{
-					ID: id.Value, Location: locate(text, id.ValueStart, id.ValueEnd, m.Path),
+					ID: id.Value, Tag: lower, Location: locate(text, id.ValueStart, id.ValueEnd, m.Path),
+					TagStart: tm[0], TagEnd: tm[1],
+				})
+			}
+		}
+		if lower == "include" {
+			if ref := findAttr(attrs, "refid"); ref != nil {
+				m.Includes = append(m.Includes, &Include{
+					RefID: strings.TrimSpace(ref.Value),
+					Start: ref.ValueStart, End: ref.ValueEnd,
 					TagStart: tm[0], TagEnd: tm[1],
 				})
 			}

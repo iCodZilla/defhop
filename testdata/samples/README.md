@@ -15,7 +15,7 @@ Covers:
 | **spring** | `application-dev.yml` profile keys (`samples.dev.banner`) |
 | **spring** | same-path Controller peer (`OrderController` ↔ `OrderCompatController`) |
 | **cloud** | OpenFeign ↔ Controller |
-| **mybatis** | Mapper ↔ XML; `@Select` annotation Mapper (Go to MyBatis SQL) |
+| **mybatis** | Mapper ↔ XML; `<include refid>` → `<sql>`; `@Select` annotation Mapper (Go to MyBatis SQL) |
 | **mybatisplus** | `ServiceImpl` / `baseMapper` (same-pkg + star-import Mapper `queryList`) |
 | **lombokdemo** | `@Data` / `@Builder`; `@NoArgs/@Required/@AllArgsConstructor` / `@SuperBuilder` |
 | **mapstructdemo** | `@Mapper` / `@Mapping` / Impl |
