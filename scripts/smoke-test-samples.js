@@ -432,6 +432,16 @@ function run() {
         "DEF baseMapper.selectByCode",
       );
 
+      locs = await defFile(
+        ["samples", "mybatisplus", "service", "StockServiceImpl.java"],
+        "queryList",
+      );
+      assertSome(
+        locs,
+        (l) => (l.path || "").includes("StockMapper.java"),
+        "DEF baseMapper.queryList (star-import Mapper)",
+      );
+
       // ---- Lombok ----
       locs = await defFile(["samples", "lombokdemo", "CustomerService.java"], "getName", (l) =>
         l.includes("Customer::getName"),
@@ -543,14 +553,21 @@ function run() {
         "DEF demo.hello -> LibDemo.hello in sources.jar",
       );
 
-      const warm = await req("REINDEX", [
+      // REINDEX is asynchronous (started:true); wait via STATUS.
+      const warm0 = Date.now();
+      let warm = await req("REINDEX", [
         samples,
         "",
         "21",
         ".git,node_modules,target,.idea,.cache,.defhop",
         cacheDir,
       ]);
-      console.log("REINDEX warm", warm.files, "files", warm.milliseconds, "ms");
+      while (warm.started) {
+        if (Date.now() - warm0 > 300000) throw new Error("REINDEX timeout");
+        await new Promise((r) => setTimeout(r, 200));
+        warm = await req("STATUS", [], 10000);
+      }
+      console.log("REINDEX warm", warm.files, "files", Date.now() - warm0, "ms");
 
       child.stdin.write(`${nextId++}\tSHUTDOWN\n`);
       console.log("SAMPLES SMOKE OK");

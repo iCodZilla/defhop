@@ -1,6 +1,9 @@
 package java
 
-import "unicode"
+import (
+	"unicode"
+	"unicode/utf8"
+)
 
 type tt int
 
@@ -90,10 +93,14 @@ func (z *lx) nx() tok {
 		z.lits = append(z.lits, iv{a, z.pos})
 		return tok{t: tNUM, a: a, b: z.pos}
 	}
-	if idS(c) {
-		z.pos++
-		for z.pos < len(z.src) && idP(z.src[z.pos]) {
-			z.pos++
+	if r, size := utf8.DecodeRune(z.src[z.pos:]); idStartRune(r) {
+		z.pos += size
+		for z.pos < len(z.src) {
+			r2, s2 := utf8.DecodeRune(z.src[z.pos:])
+			if !idPartRune(r2) {
+				break
+			}
+			z.pos += s2
 		}
 		return tok{t: tID, s: string(z.src[a:z.pos]), a: a, b: z.pos}
 	}
@@ -169,8 +176,19 @@ func (z *lx) skip() {
 	}
 }
 
+// idS/idP are the byte-level variants used by scanners that walk already
+// validated ASCII regions. The lexer uses the rune-aware pair below so that
+// non-ASCII Java identifiers (e.g. Chinese names) stay one token.
 func idS(c byte) bool { return c == '_' || c == '$' || unicode.IsLetter(rune(c)) }
 func idP(c byte) bool { return idS(c) || (c >= '0' && c <= '9') }
+
+func idStartRune(r rune) bool {
+	return r == '_' || r == '$' || unicode.IsLetter(r) || unicode.Is(unicode.Sc, r)
+}
+
+func idPartRune(r rune) bool {
+	return idStartRune(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Mc, r)
+}
 func isDig(c byte) bool { return c >= '0' && c <= '9' }
 
 func isTypeKW(s string) bool {

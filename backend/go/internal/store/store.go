@@ -3,6 +3,7 @@ package store
 import (
 	"defhop/internal/model"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -45,7 +46,12 @@ func New() *Store {
 var pathKeyIntern sync.Map // string -> string
 
 func PathKey(p string) string {
-	k := strings.ToLower(filepath.ToSlash(p))
+	k := filepath.ToSlash(p)
+	// Only Windows has case-insensitive paths by default. Lowercasing on
+	// Linux would merge distinct files such as Foo.java / foo.java.
+	if runtime.GOOS == "windows" {
+		k = strings.ToLower(k)
+	}
 	if v, ok := pathKeyIntern.Load(k); ok {
 		return v.(string)
 	}
@@ -208,6 +214,18 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 			if sym.Kind == "type" {
 				for i, sk := range sym.SuperKeys {
 					sym.SuperKeys[i] = normalizeTypeKey(snap, sk, fd.Imports)
+				}
+				if sym.ExtendsKey != "" {
+					sym.ExtendsKey = normalizeTypeKey(snap, sym.ExtendsKey, fd.Imports)
+				}
+				// ExtendsArgs are bare FQNs (no T|). Star-import ql() may pin the
+				// wrong package (current pkg); re-resolve via imports + Simple.
+				for i, a := range sym.ExtendsArgs {
+					if a == "" {
+						continue
+					}
+					sym.ExtendsArgs[i] = strings.TrimPrefix(
+						normalizeTypeKey(snap, "T|"+a, fd.Imports), "T|")
 				}
 			}
 			if sym.Kind == "method" && sym.ReturnType != "" {

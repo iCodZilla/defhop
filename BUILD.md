@@ -45,16 +45,21 @@ node .\scripts\bench-init-only.js
 
 INIT + DEF samples against local mid/large sample workspaces. **README must describe scale only** (file count / module count)—do not publish real project names.
 
-Manual:
+Manual (stamp the package version into the binary so `Defhop: Doctor` can report it):
 
 ```powershell
 cd backend\go
+$Version = (Get-Content ..\..\package.json -Raw | ConvertFrom-Json).version
 # local Windows only:
-go build -o ..\defhop.exe ./cmd/defhop
+go build -ldflags "-X main.backendVersion=$Version" -o ..\defhop.exe ./cmd/defhop
 # WSL / Linux example:
 $env:GOOS="linux"; $env:GOARCH="amd64"; $env:CGO_ENABLED="0"
-go build -o ..\defhop-linux-x64 ./cmd/defhop
+go build -ldflags "-X main.backendVersion=$Version" -o ..\defhop-linux-x64 ./cmd/defhop
 ```
+
+`build.ps1` reads `package.json` and applies the same `-ldflags` automatically.
+CI (`.github/workflows/ci.yml`) runs `go vet`, `go test -race`,
+a 30s parser fuzz run, and cross-builds every shipped target.
 
 The extension picks `defhop-${platform}-${arch}` (never runs `.exe` on Linux/WSL) and `chmod +x` on Unix.
 

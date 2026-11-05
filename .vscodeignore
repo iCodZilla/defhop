@@ -3,6 +3,7 @@ testdata/**
 scripts/**
 dist/**
 .cursor/**
+.github/**
 .defhop/**
 **/.defhop/**
 .imp-cache/**

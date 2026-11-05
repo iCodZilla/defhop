@@ -69,20 +69,20 @@ type FileSlice struct {
 type NavKind string
 
 const (
-	NavDef  NavKind = "DEF"
-	NavRefs NavKind = "REFS"
-	NavImpl NavKind = "IMPL"
+	NavDef   NavKind = "DEF"
+	NavRefs  NavKind = "REFS"
+	NavImpl  NavKind = "IMPL"
 	NavRoute NavKind = "ROUTE"
 )
 
 // NavRequest is a single navigation query.
 type NavRequest struct {
-	Kind              NavKind
-	Path              string
-	Text              string // may be empty when overlay already has it
-	Line, Character   int
-	IncludeDecl       bool
-	Gen               uint64
+	Kind            NavKind
+	Path            string
+	Text            string // may be empty when overlay already has it
+	Line, Character int
+	IncludeDecl     bool
+	Gen             uint64
 }
 
 // WorkspaceFacts are cheap Detect inputs (no heavy parsing).

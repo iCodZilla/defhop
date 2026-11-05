@@ -12,10 +12,10 @@ import (
 
 // Limits keep dependency indexing bounded on large classpaths.
 const (
-	MaxJars          = 80
-	MaxFilesPerJar   = 400
-	MaxTotalFiles    = 4000
-	MaxJDKFiles      = 1200
+	MaxJars        = 80
+	MaxFilesPerJar = 400
+	MaxTotalFiles  = 4000
+	MaxJDKFiles    = 1200
 )
 
 // JarRef is one sources or binary archive to index.

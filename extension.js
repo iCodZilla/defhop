@@ -24,6 +24,13 @@ const readline = require("readline");
 
 let nextRequestId = 1;
 
+// Must match backend/go/cmd/defhop/main.go protocolVersion. A stale binary is
+// rejected explicitly instead of failing later with misparsed replies.
+const PROTOCOL_VERSION = 1;
+// Mirrors maxIndexedFileBytes in the backend. Larger buffers are not shipped
+// over the line protocol (the backend would reject the request line).
+const MAX_OVERLAY_TEXT_BYTES = 8 * 1024 * 1024;
+
 function b64(value) {
   return Buffer.from(String(value), "utf8").toString("base64");
 }
@@ -322,9 +329,15 @@ class DefhopClient {
     this._targetPct = 0;
     this._animTimer = undefined;
     this._liveSyncLabel = "";
+    this._restartTimer = undefined;
+    this._restartStableTimer = undefined;
+    this._restartAttempts = 0;
+    this._deactivating = false;
+    this._oversizeLogged = new Set();
   }
 
   async ensureReady() {
+    if (this._deactivating) throw new Error("Defhop is shutting down.");
     if (this._ready) return;
     if (this._starting) {
       await this._startPromise;
@@ -376,6 +389,12 @@ class DefhopClient {
     this._progress = emptyProgress();
     this._displayPct = 0;
     this._targetPct = 0;
+    this._lastLoggedPct = -1;
+    // A restarted backend starts with an empty overlay: forget what the old
+    // process had synced so open buffers are pushed again after INIT.
+    this._syncedVersion.clear();
+    this._syncedHash.clear();
+    this._oversizeLogged.clear();
     this._applyProgress({ pct: 1, phase: "scan", step: "启动中", message: "starting" });
 
     const jdkHome = await this._ensureJdkHome();
@@ -409,21 +428,65 @@ class DefhopClient {
       this._ready = false;
       this.output.appendLine(`[backend] exited code=${code} signal=${signal}`);
       this._stopProgressAnim();
-      this._setStatusMode("error", "后端已退出，点击查看输出");
       this._rejectAll(new Error(`Backend exited (${code ?? signal})`));
       if (this.child === child) this.child = undefined;
+      if (this._restartStableTimer) {
+        clearTimeout(this._restartStableTimer);
+        this._restartStableTimer = undefined;
+      }
+      if (this._deactivating || child._defhopDeliberateKill) return;
+      this._setStatusMode("error", "后端已退出，正在重启…");
+      this._scheduleRestart();
     });
+
+    // Refuse a backend built from different protocol assumptions, otherwise
+    // missing fields surface as silent wrong navigation results.
+    let pong;
+    try {
+      pong = await this._doRequest("PING", [], 5000);
+    } catch (error) {
+      child._defhopDeliberateKill = true;
+      if (this.child === child) this.child = undefined;
+      child.kill();
+      this._setStatusMode("error", "后端版本不匹配");
+      throw new Error(
+        `Defhop backend is out of date (${error.message || error}). Rebuild or reinstall the extension.`,
+      );
+    }
+    if (Number(pong.protocolVersion) !== PROTOCOL_VERSION) {
+      child._defhopDeliberateKill = true;
+      child.kill();
+      if (this.child === child) this.child = undefined;
+      this._setStatusMode("error", "后端版本不匹配");
+      throw new Error(
+        `Defhop protocol mismatch: extension=${PROTOCOL_VERSION} backend=${pong.protocolVersion}. ` +
+          `Rebuild or reinstall the extension.`,
+      );
+    }
+    this.output.appendLine(
+      `[backend] version=${pong.backendVersion || "?"} protocol=${pong.protocolVersion}`,
+    );
 
     let init;
     try {
       init = await this._doRequest("INIT", this.reindexArguments(), 300000);
     } catch (error) {
+      child._defhopDeliberateKill = true;
       if (this.child === child) this.child = undefined;
       child.kill();
+      this._setStatusMode("error", "后端启动失败，点击查看输出");
+      this.output.appendLine(`[backend] init failed: ${error.message || error}`);
       throw error;
     }
 
     this._ready = true;
+    // Count a crash loop from the same failure, but a backend that survives
+    // 30s is considered healthy and gets a fresh retry budget.
+    if (this._restartStableTimer) clearTimeout(this._restartStableTimer);
+    this._restartStableTimer = setTimeout(() => {
+      this._restartStableTimer = undefined;
+      this._restartAttempts = 0;
+    }, 30000);
     const plugins = (init.plugins || []).join(",") || "none";
     const summary = `${init.files || 0} files, ${init.symbols || 0} symbols`;
     this._initSummary = summary;
@@ -451,6 +514,31 @@ class DefhopClient {
     for (const doc of vscode.workspace.textDocuments) {
       this.pushBuffer(doc);
     }
+  }
+
+  /** Restart a crashed backend with bounded exponential backoff. */
+  _scheduleRestart() {
+    if (this._deactivating || this._restartTimer) return;
+    if (this._restartAttempts >= 3) {
+      this.output.appendLine("[backend] giving up after 3 restart attempts — see output above");
+      this._setStatusMode("error", "后端反复退出，请查看 Defhop 输出");
+      return;
+    }
+    const delay = 1000 * 3 ** this._restartAttempts;
+    this._restartAttempts += 1;
+    this.output.appendLine(
+      `[backend] restart in ${delay}ms (attempt ${this._restartAttempts}/3)`,
+    );
+    this._restartTimer = setTimeout(async () => {
+      this._restartTimer = undefined;
+      if (this._deactivating) return;
+      try {
+        await this.ensureReady();
+      } catch (error) {
+        this.output.appendLine(`[backend] restart failed: ${error.message || error}`);
+        this._scheduleRestart();
+      }
+    }, delay);
   }
 
   _applyProgress(snap) {
@@ -697,12 +785,24 @@ class DefhopClient {
     const sync = !!opts.sync;
     if (!sync && this._syncedVersion.get(file) === ver) return Promise.resolve();
     const text = document.getText();
+    if (Buffer.byteLength(text, "utf8") > MAX_OVERLAY_TEXT_BYTES) {
+      if (!this._oversizeLogged.has(file)) {
+        this._oversizeLogged.add(file);
+        this.output.appendLine(
+          `[update] skipped oversized buffer (>${MAX_OVERLAY_TEXT_BYTES >> 20} MB): ${file}`,
+        );
+      }
+      // Make sure a previously pushed (smaller) overlay is not left published.
+      this._doRequest("DROPOVERLAY", [file], 5000).catch(() => {});
+      return null;
+    }
     const hash = contentFingerprint(text);
     // Same bytes as last push (common on undo) — skip base64 IPC entirely.
     if (!sync && this._syncedHash.get(file) === hash) {
       this._syncedVersion.set(file, ver);
       return Promise.resolve();
     }
+    this._oversizeLogged.delete(file);
     this._syncedVersion.set(file, ver);
     this._syncedHash.set(file, hash);
     const args = sync ? [file, text, "sync"] : [file, text];
@@ -1122,6 +1222,39 @@ class DefhopClient {
     ];
   }
 
+  /**
+   * Run a full index and wait for it.
+   * The backend answers REINDEX/REBUILD immediately (started:true) so nav
+   * keeps working from the previous snapshot; completion is observed through
+   * STATUS (indexing flag + progress phase).
+   */
+  async _runIndexCommand(command, timeoutMs = 600000) {
+    const startedAt = Date.now();
+    const reply = await this._doRequest(command, this.reindexArguments(), 15000);
+    if (!reply.started) return reply; // older synchronous reply
+    while (Date.now() - startedAt < timeoutMs) {
+      if (this._deactivating) throw new Error("Defhop is shutting down.");
+      if (!this.child) throw new Error("Backend exited while indexing.");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      let ping;
+      try {
+        ping = await this._doRequest("PING", [], 5000);
+      } catch (error) {
+        this.output.appendLine(`[index] status poll: ${error.message}`);
+        continue;
+      }
+      if (ping.indexing) continue;
+      const status = await this._doRequest("STATUS", [], 5000);
+      if (status.indexing) continue;
+      const phase = status.progress && status.progress.phase;
+      if (phase !== "done") {
+        throw new Error(`${command} stopped in phase "${phase || "unknown"}"`);
+      }
+      return { ...status, milliseconds: Date.now() - startedAt };
+    }
+    throw new Error(`${command} did not finish within ${Math.round(timeoutMs / 1000)}s`);
+  }
+
   _toLocations(raw) {
     return (raw || [])
       .filter((item) => item && item.path)
@@ -1425,7 +1558,7 @@ class DefhopClient {
   async shutdown() {
     if (this.child && this.child.stdin?.writable) {
       try {
-        await this._doRequest("SHUTDOWN", [], 8000);
+        await this._doRequest("SHUTDOWN", [], 15000);
       } catch {
         /* process may already be exiting */
       }
@@ -1434,6 +1567,15 @@ class DefhopClient {
   }
 
   dispose() {
+    this._deactivating = true;
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = undefined;
+    }
+    if (this._restartStableTimer) {
+      clearTimeout(this._restartStableTimer);
+      this._restartStableTimer = undefined;
+    }
     this._rejectAll(new Error("Defhop is shutting down."));
     this._stopProgressAnim();
     this.child?.kill();
@@ -1624,7 +1766,7 @@ async function activate(context) {
         message: "refresh",
         java: { pct: 0, done: 0, total: 0, state: "pending" },
       });
-      const result = await client._doRequest("REINDEX", client.reindexArguments(), 300000);
+      const result = await client._runIndexCommand("REINDEX", 300000);
       await client.syncOpenBuffers();
       client._applyProgress({
         ...(client._progress || emptyProgress()),
@@ -1659,7 +1801,7 @@ async function activate(context) {
         message: "rebuild",
         java: { pct: 0, done: 0, total: 0, state: "pending" },
       });
-      const result = await client._doRequest("REBUILD", client.reindexArguments(), 600000);
+      const result = await client._runIndexCommand("REBUILD", 600000);
       await client.syncOpenBuffers();
       client._applyProgress({
         ...(client._progress || emptyProgress()),
@@ -1677,6 +1819,35 @@ async function activate(context) {
     }),
     vscode.commands.registerCommand("defhop.status", () => {
       client.output.show(true);
+    }),
+    vscode.commands.registerCommand("defhop.doctor", async () => {
+      const lines = ["Defhop doctor"];
+      lines.push(`extension: ${client.context.extension.packageJSON.version}`);
+      lines.push(`vscode: ${vscode.version}  platform: ${process.platform}-${process.arch}`);
+      lines.push(`roots: ${(client.roots || []).join("; ") || "(none)"}`);
+      lines.push(`cacheDir: ${client._cacheDir || "(none)"}`);
+      lines.push(`jdk: ${client._jdkHome() || "(unset)"} (${client._jdkSource || "none"})`);
+      try {
+        await client.ensureReady();
+        const status = await client._doRequest("STATUS", [], 10000);
+        lines.push(
+          `backend: ${status.backendVersion || "?"} protocol=${status.protocolVersion ?? "?"}`,
+        );
+        lines.push(
+          `index: ${status.files || 0} files, ${status.symbols || 0} symbols, ${status.references || 0} references`,
+        );
+        lines.push(`plugins: ${(status.plugins || []).join(", ") || "none"}`);
+        lines.push(`indexing: ${status.indexing ? "yes" : "no"}`);
+        const p = status.progress || {};
+        lines.push(`progress: ${p.pct ?? "?"}% ${p.phase || ""} ${p.message || ""}`.trim());
+      } catch (error) {
+        lines.push(`backend: ERROR ${error.message || error}`);
+      }
+      const text = lines.join("\n");
+      for (const line of lines) client.output.appendLine(`[doctor] ${line}`);
+      client.output.show(true);
+      await vscode.env.clipboard.writeText(text);
+      vscode.window.showInformationMessage("Defhop doctor: details in Output and clipboard.");
     }),
     vscode.commands.registerCommand("defhop.configureJdk", async () => {
       const current = client._jdkHome() || "(未设置)";
@@ -1717,7 +1888,7 @@ async function activate(context) {
       }
       if (client._ready) {
         try {
-          await client._doRequest("REINDEX", client.reindexArguments(), 300000);
+          await client._runIndexCommand("REINDEX", 300000);
           await client.syncOpenBuffers();
         } catch (error) {
           client.output.appendLine(`[config] jdk apply failed: ${error.message || error}`);
@@ -1734,7 +1905,7 @@ async function activate(context) {
       await client._clearProjectJdk();
       if (client._ready) {
         try {
-          await client._doRequest("REINDEX", client.reindexArguments(), 300000);
+          await client._runIndexCommand("REINDEX", 300000);
           await client.syncOpenBuffers();
         } catch (error) {
           client.output.appendLine(`[config] jdk clear failed: ${error.message || error}`);
@@ -1801,7 +1972,7 @@ async function activate(context) {
       );
       if (!client._ready) return;
       try {
-        await client._doRequest("REINDEX", client.reindexArguments(), 300000);
+        await client._runIndexCommand("REINDEX", 300000);
         await client.syncOpenBuffers();
         if (jdk) {
           vscode.window.showInformationMessage(`Defhop JDK updated: ${jdk}`);

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.12] - 2026-11-05
+
+### Added
+- **Defhop: Doctor** — one command reports extension/backend versions, protocol, workspace roots, cache dir, JDK source, index counts, plugin state and progress; copies the report to the clipboard.
+- **Protocol handshake** — `PING` returns `backendVersion` / `protocolVersion`; a stale backend is rejected with a clear message instead of failing later with misparsed replies. `build.ps1` stamps the `package.json` version into the binary.
+- **`CANCEL`** — stops a running full index.
+
+### Changed
+- **Background refresh** — `REINDEX` / `REBUILD` return `started:true` immediately and run off the request loop, so navigation keeps answering from the previous snapshot instead of queueing behind the scan. Progress resets per run; cancellation is honored in scan, hash, cache-load and parse phases.
+- **Crash recovery** — the extension restarts a backend that exits unexpectedly (bounded backoff, three attempts) and re-pushes open buffers.
+- **Large files** — files over 8 MB are skipped by the scanner and overlay pushes (instead of producing oversized protocol lines).
+
+### Fixed
+- **Encoding** — sources are normalized from UTF-8/GB18030 before hashing and parsing; CJK identifiers now parse correctly.
+- **Cache atomicity** — gob/manifest/packed writes use a unique temp file + rename, so concurrent VS Code windows cannot read or produce a half-written cache.
+- **Overlay generations** — cached slices no longer persist the per-process overlay generation, which could make the first edit of a new session look stale and get dropped.
+- **Path keys** — case folding now only applies on Windows; Linux keeps `Foo.java` and `foo.java` distinct.
+- **Cross-session cache** — file slices reload at generation 0; dependency extraction is cancelled before test-created temp dirs are removed.
+
 ## [1.0.11] - 2026-11-04
 
 ### Fixed

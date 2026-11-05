@@ -1,8 +1,8 @@
 package java
 
 import (
-	"fmt"
 	"defhop/internal/model"
+	"fmt"
 	"strings"
 )
 

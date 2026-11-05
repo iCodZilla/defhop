@@ -82,7 +82,7 @@ func (h *Hub) ensureExternalType(fqn string) *model.Symbol {
 			return s
 		}
 	}
-	cacheDir := h.CacheDir
+	cacheDir := h.cacheDir()
 	if cacheDir == "" {
 		return nil
 	}

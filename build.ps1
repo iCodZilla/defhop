@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $GoDir = Join-Path $Root "backend\go"
 $OutDir = Join-Path $Root "backend"
-
-Write-Host "==> Building Go backend (multi-platform)"
+$Version = (Get-Content (Join-Path $Root "package.json") -Raw | ConvertFrom-Json).version
+Write-Host "==> Extension version: $Version"
 Push-Location $GoDir
 try {
   New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -19,7 +19,7 @@ try {
     $env:GOARCH = $t.GOARCH
     $env:CGO_ENABLED = "0"
     $outPath = Join-Path $OutDir $t.Out
-    go build -o $outPath ./cmd/defhop
+    go build -ldflags "-X main.backendVersion=$Version" -o $outPath ./cmd/defhop
     if ($LASTEXITCODE -ne 0) { throw "go build failed for $($t.GOOS)/$($t.GOARCH)" }
     Write-Host "    -> $outPath"
     if ($t.Also) {

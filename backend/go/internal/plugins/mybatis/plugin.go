@@ -144,7 +144,7 @@ func (p *Plugin) rebuildServiceMappers(core plugin.Core) {
 		if sym.Kind != "type" || sym.InterfaceType {
 			continue
 		}
-		if mk := mapperFromExtends(sym); mk != "" {
+		if mk := mapperFromExtends(core, sym); mk != "" {
 			p.serviceMappers[sym.Key] = mk
 		}
 	}
@@ -152,14 +152,33 @@ func (p *Plugin) rebuildServiceMappers(core plugin.Core) {
 
 // mapperFromExtends reads ServiceImpl<M, T> — M is the first extends type arg.
 // See com.baomidou.mybatisplus.extension.service.impl.ServiceImpl.
-func mapperFromExtends(sym *model.Symbol) string {
+// Resolves M through imports so star-import Mappers are not stuck on the service package.
+func mapperFromExtends(core plugin.Core, sym *model.Symbol) string {
 	if sym == nil {
 		return ""
 	}
-	if isServiceImplKey(sym.ExtendsKey) && len(sym.ExtendsArgs) > 0 {
-		return "T|" + sym.ExtendsArgs[0]
+	if !isServiceImplKey(sym.ExtendsKey) || len(sym.ExtendsArgs) == 0 {
+		return ""
 	}
-	return ""
+	mk := "T|" + sym.ExtendsArgs[0]
+	return resolveMapperTypeKey(core, sym, mk)
+}
+
+func resolveMapperTypeKey(core plugin.Core, owner *model.Symbol, mk string) string {
+	if mk == "" || core == nil {
+		return mk
+	}
+	if core.Symbol(mk) != nil {
+		return mk
+	}
+	var fd *model.FileSlice
+	if owner != nil && owner.Declaration != nil {
+		fd = core.File(store.PathKey(owner.Declaration.Path))
+	}
+	if resolved := core.ResolveTypeKey(mk, fd); resolved != "" {
+		return resolved
+	}
+	return mk
 }
 
 func isServiceImplKey(key string) bool {
@@ -257,7 +276,8 @@ func (p *Plugin) OnFileChanged(ev plugin.ChangeEvent) {
 			if sym.Kind != "type" || sym.InterfaceType {
 				continue
 			}
-			if mk := mapperFromExtends(sym); mk != "" {
+			// ExtendsArgs already import-normalized in store.buildSnapshot.
+			if mk := mapperFromExtends(nil, sym); mk != "" {
 				p.serviceMappers[sym.Key] = mk
 			}
 		}
@@ -399,7 +419,7 @@ func (p *Plugin) mapperOf(core plugin.Core, typeKey string) string {
 		if sym == nil {
 			continue
 		}
-		if mk := mapperFromExtends(sym); mk != "" {
+		if mk := mapperFromExtends(core, sym); mk != "" {
 			p.mu.Lock()
 			p.serviceMappers[cur] = mk
 			p.mu.Unlock()

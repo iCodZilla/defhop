@@ -1,17 +1,17 @@
 package hub
 
 import (
-	"fmt"
 	"defhop/internal/java"
 	"defhop/internal/model"
 	"defhop/internal/store"
+	"fmt"
 	"strings"
 )
 
 // HoverInfo is markdown + optional jump target for the VS Code hover provider.
 type HoverInfo struct {
-	Markdown string       `json:"markdown"`
-	Item     *SymbolItem  `json:"item,omitempty"`
+	Markdown string      `json:"markdown"`
+	Item     *SymbolItem `json:"item,omitempty"`
 }
 
 // Hover resolves the symbol under the cursor and returns a short signature card.

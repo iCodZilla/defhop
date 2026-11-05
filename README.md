@@ -95,7 +95,7 @@ Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 - Mapper 方法 ↔ XML `<select|insert|…>`（双向）
 - 注解 Mapper（`@Select` / `@Insert` / …）→ Go to MyBatis SQL
 - 业务代码中调用 Mapper 方法跳转
-- `ServiceImpl` 中 `baseMapper` → 具体 Mapper / 自定义方法
+- `ServiceImpl` 中 `baseMapper` → 具体 Mapper / 自定义方法（含星号导入的 Mapper）
 
 ### Lombok / MapStruct
 
@@ -106,17 +106,18 @@ Windows / Linux / macOS / WSL / Remote-SSH 均可使用。
 
 ## 怎么用
 
-1. 从扩展市场安装 **Defhop for Java**，重新加载窗口  
-2. 打开 **Maven / Gradle** Java 项目  
-3. 等待右下角索引完成  
+1. 从扩展市场安装 **Defhop for Java**，重新加载窗口
+2. 打开 **Maven / Gradle** Java 项目
+3. 等待右下角索引完成
 4. 符号上 **`F12`** 或 **`Ctrl`+点击** 跳转定义，或右键 **查找引用**
 
 命令面板搜 `Defhop`：
 
-- **Refresh Index** — 刷新索引（保留缓存）  
-- **Clear Cache and Rebuild** — 清缓存后全量重建  
-- **Defhop JDK**（设置 / 状态栏）— 为本工作区指定 JDK，便于 `java.*` 跳转  
-- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML  
+- **Refresh Index** — 刷新索引（保留缓存）
+- **Clear Cache and Rebuild** — 清缓存后全量重建
+- **Defhop JDK**（设置 / 状态栏）— 为本工作区指定 JDK，便于 `java.*` 跳转
+- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML
+- **Doctor** — 输出环境 / 索引 / 插件诊断信息（同时复制到剪贴板）
 
 仓库内 `testdata/samples` 覆盖上表能力的可跳转示例（含 Lombok 构造器、`@Select`、`@Qualifier`、多环境配置、同路径 Controller 等），说明见该目录 README。
 
@@ -214,7 +215,7 @@ Listed **by component**; keep this list (EN + 中文), `testdata/samples`, and `
 - Mapper method ↔ XML `<select|insert|…>` (both ways)
 - Annotation mappers (`@Select` / `@Insert` / …) via Go to MyBatis SQL
 - Calls to Mapper methods in business code
-- `baseMapper` in `ServiceImpl` → concrete Mapper / custom methods
+- `baseMapper` in `ServiceImpl` → concrete Mapper / custom methods (incl. star-imported Mapper)
 
 ### Lombok / MapStruct
 
@@ -225,17 +226,18 @@ Listed **by component**; keep this list (EN + 中文), `testdata/samples`, and `
 
 ## How to use
 
-1. Install **Defhop for Java** and reload  
-2. Open a **Maven / Gradle** Java workspace  
-3. Wait for the status-bar index  
-4. **`F12`** or **`Ctrl`+click** / Find References 
+1. Install **Defhop for Java** and reload
+2. Open a **Maven / Gradle** Java workspace
+3. Wait for the status-bar index
+4. **`F12`** or **`Ctrl`+click** / Find References
 
 Command Palette → `Defhop`:
 
-- **Refresh Index** — refresh (keep cache)  
-- **Clear Cache and Rebuild** — full rebuild  
-- **Defhop JDK** (settings / status bar) — set JDK for this workspace (`java.*` jumps)  
-- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML  
+- **Refresh Index** — refresh (keep cache)
+- **Clear Cache and Rebuild** — full rebuild
+- **Defhop JDK** (settings / status bar) — set JDK for this workspace (`java.*` jumps)
+- **Go to MyBatis SQL** / **Go to Java Declaration** — Mapper ↔ XML
+- **Doctor** — print environment / index / plugin diagnostics (also copied to clipboard)
 
 See `testdata/samples` for jump fixtures covering the features above (Lombok ctors, `@Select`, `@Qualifier`, profile configs, path-peer Controllers, …).
 

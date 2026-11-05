@@ -1,4 +1,4 @@
-﻿package hub
+package hub
 
 import (
 	"defhop/internal/model"

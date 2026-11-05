@@ -24,9 +24,9 @@ guava = "com.google.guava:guava:32.0.0"
 	}
 	coords := parseGradleVersionCatalog(path)
 	want := map[string]bool{
-		"org.springframework.boot:spring-boot:3.2.0":                false,
-		"com.fasterxml.jackson.core:jackson-core:2.16.0":           false,
-		"com.google.guava:guava:32.0.0":                            false,
+		"org.springframework.boot:spring-boot:3.2.0":     false,
+		"com.fasterxml.jackson.core:jackson-core:2.16.0": false,
+		"com.google.guava:guava:32.0.0":                  false,
 	}
 	for _, c := range coords {
 		key := c.Group + ":" + c.Artifact + ":" + c.Version

@@ -17,14 +17,14 @@ class Use {
 `
 	fd := java.Parse("Point.java", src, 0)
 	want := map[string]bool{
-		"T|t.Point":             false,
-		"F|T|t.Point|x":         false,
-		"F|T|t.Point|name":      false,
-		"M|T|t.Point|x|":        false,
-		"M|T|t.Point|name|":     false,
-		"M|T|t.Point|sum|":      false,
-		"T|t.Use":               false,
-		"M|T|t.Use|f|t.Point":   false,
+		"T|t.Point":           false,
+		"F|T|t.Point|x":       false,
+		"F|T|t.Point|name":    false,
+		"M|T|t.Point|x|":      false,
+		"M|T|t.Point|name|":   false,
+		"M|T|t.Point|sum|":    false,
+		"T|t.Use":             false,
+		"M|T|t.Use|f|t.Point": false,
 	}
 	for _, s := range fd.Symbols {
 		if s == nil {

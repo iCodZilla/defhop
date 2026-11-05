@@ -35,8 +35,8 @@ func (s *Store) publishDeltaLocked(pathKey string, old, neu *model.FileSlice) {
 
 // cow tracks which maps have been forked from prev for this publish.
 type cow struct {
-	prev *Snapshot
-	snap *Snapshot
+	prev                                                      *Snapshot
+	snap                                                      *Snapshot
 	files, symTab, subtype, flat, simple, method, field, refs bool
 }
 

@@ -8,7 +8,7 @@ import (
 
 // ClassInfo is a lean view of a .class file (public API only).
 type ClassInfo struct {
-	BinaryName string // org.apache.http.client.config.RequestConfig
+	BinaryName  string // org.apache.http.client.config.RequestConfig
 	IsInterface bool
 	IsPublic    bool
 	SuperName   string

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go/go.mod
+          cache-dependency-path: backend/go/go.sum
+      - name: vet
+        run: go vet ./...
+      - name: test (race)
+        run: go test -race ./...
+      - name: fuzz parser (30s)
+        run: go test ./internal/java -run='^$' -fuzz=FuzzParse -fuzztime=30s
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go/go.mod
+          cache-dependency-path: backend/go/go.sum
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+        working-directory: backend/go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -o /dev/null ./cmd/defhop
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: syntax check
+        run: node --check extension.js
+      - name: manifest parses
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"

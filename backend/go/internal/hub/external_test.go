@@ -19,6 +19,9 @@ func TestEnsureExternalRequestConfig(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	h := New()
+	// Dependency-source extraction runs in the background; stop it and wait
+	// so TempDir cleanup does not race writes under cache/deps on Windows.
+	t.Cleanup(h.stopBackgroundDeps)
 	h.CacheDir = tmp
 	src := `package demo;
 import org.apache.http.client.config.RequestConfig;

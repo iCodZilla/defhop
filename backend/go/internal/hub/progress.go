@@ -13,7 +13,7 @@ var knownPluginIDs = []string{"spring", "mybatis", "lombok", "mapstruct", "feign
 
 var pluginStepLabel = map[string]string{
 	"spring":    "Spring",
-	"mybatis":    "MyBatis",
+	"mybatis":   "MyBatis",
 	"lombok":    "Lombok",
 	"mapstruct": "MapStruct",
 	"feign":     "OpenFeign",
@@ -62,6 +62,16 @@ func newProgressTracker() *progressTracker {
 			Plugins: plugins,
 		},
 	}
+}
+
+// Reset returns the tracker to its initial state without replacing the
+// pointer, so concurrent STATUS readers never race with an index start.
+func (t *progressTracker) Reset() {
+	ns := newProgressTracker()
+	t.mu.Lock()
+	t.snap = ns.snap
+	t.lastPct = 0
+	t.mu.Unlock()
 }
 
 func (t *progressTracker) Snapshot() ProgressSnap {

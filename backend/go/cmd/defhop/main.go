@@ -3,9 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
 	"defhop/internal/deps"
 	"defhop/internal/hub"
 	"defhop/internal/model"
@@ -14,12 +11,30 @@ import (
 	"defhop/internal/plugins/mapstruct"
 	"defhop/internal/plugins/mybatis"
 	"defhop/internal/plugins/spring"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
-const backendVersion = "1.0.0"
+// backendVersion is injected at build time:
+//
+//	go build -ldflags "-X main.backendVersion=$(package.json version)"
+var backendVersion = "dev"
+
+// protocolVersion is bumped whenever the line protocol changes. The VS Code
+// client refuses to run a backend with a different version.
+const protocolVersion = 1
+
+const (
+	// Reject absurd requests instead of letting bufio.Scanner kill the process.
+	maxRequestLine = 32 << 20
+	scannerMaxLine = 64 << 20
+)
 
 func main() {
 	fmt.Fprintf(os.Stderr, "[progress] backend %s starting\n", backendVersion)
@@ -32,7 +47,7 @@ func main() {
 	)
 
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 1024*1024), scannerMaxLine)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -44,6 +59,12 @@ func main() {
 			continue
 		}
 		id, cmd := parts[0], strings.ToUpper(parts[1])
+		if len(line) > maxRequestLine {
+			fmt.Fprintf(os.Stdout,
+				`{"id":%s,"ok":false,"error":"request too large; open the file to navigate it"}`+"\n",
+				quote(id))
+			continue
+		}
 		var args []string
 		if len(parts) >= 3 && parts[2] != "" {
 			for _, b64 := range strings.Split(parts[2], "\t") {
@@ -56,8 +77,9 @@ func main() {
 			}
 		}
 		if cmd == "SHUTDOWN" {
+			indexes.stopAndWait(8 * time.Second)
 			h.FlushCachePersist()
-			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true}`+"\n", quote(id))
+			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true}`+"\n", id)
 			break
 		}
 
@@ -69,54 +91,186 @@ func main() {
 			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true%s}`+"\n", id, payload)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "[io] stdin closed: %v\n", err)
+	}
+}
+
+// indexArgs is the shared INIT/REINDEX/REBUILD argument bag.
+type indexArgs struct {
+	roots    []string
+	cacheDir string
+	jdk      string
+	hasJDK   bool
+	excludes string
+}
+
+func parseIndexArgs(args []string) (indexArgs, error) {
+	if len(args) < 1 || args[0] == "" {
+		return indexArgs{}, fmt.Errorf("workspace root required")
+	}
+	root := args[0]
+	ia := indexArgs{roots: []string{root}}
+	if len(args) >= 4 {
+		ia.excludes = args[3]
+	}
+	if len(args) >= 5 && args[4] != "" {
+		ia.cacheDir = args[4]
+	} else {
+		ia.cacheDir = filepath.Join(root, ".defhop")
+	}
+	if len(args) >= 6 && args[5] != "" {
+		for _, extra := range strings.Split(args[5], "\n") {
+			extra = strings.TrimSpace(extra)
+			if extra != "" && !strings.EqualFold(filepath.Clean(extra), filepath.Clean(root)) {
+				ia.roots = append(ia.roots, extra)
+			}
+		}
+	}
+	if len(args) >= 7 {
+		ia.jdk = args[6]
+		ia.hasJDK = true // empty is meaningful: clear a previously set JDK
+	}
+	return ia, nil
+}
+
+func runIndex(ctx context.Context, h *hub.Hub, cmd string, ia indexArgs) (files, syms, refs int, ms int64, plugins []string, err error) {
+	if ia.excludes != "" {
+		h.ConfigureExcludes(ia.excludes)
+	}
+	if ia.hasJDK {
+		deps.SetJDKHome(ia.jdk)
+		h.ClearExternalLocateCache()
+	}
+	if cmd == "REBUILD" {
+		return h.RebuildRoots(ctx, ia.roots, ia.cacheDir)
+	}
+	return h.InitRoots(ctx, ia.roots, ia.cacheDir)
+}
+
+// indexRunner keeps at most one background full index, cancelable from the
+// command loop while it runs.
+type indexRunner struct {
+	mu     sync.Mutex
+	runMu  sync.Mutex
+	gen    uint64
+	cancel context.CancelFunc
+}
+
+var indexes = &indexRunner{}
+
+// begin cancels any running index and reserves the slot for a new run.
+func (r *indexRunner) begin() (context.Context, context.CancelFunc, uint64) {
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+	}
+	r.gen++
+	gen := r.gen
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	r.mu.Unlock()
+	return ctx, cancel, gen
+}
+
+func (r *indexRunner) finish(gen uint64, cancel context.CancelFunc) {
+	cancel()
+	r.mu.Lock()
+	if r.gen == gen {
+		r.cancel = nil // finished on its own; CANCEL must report false
+	}
+	r.mu.Unlock()
+}
+
+// run executes one full index on the calling goroutine (INIT must answer with
+// counts, but still reports indexing=true to STATUS/PING while it runs).
+func (r *indexRunner) run(h *hub.Hub, cmd string, ia indexArgs) (files, syms, refs int, ms int64, plugins []string, err error) {
+	ctx, cancel, gen := r.begin()
+	defer r.finish(gen, cancel)
+	r.runMu.Lock()
+	defer r.runMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return 0, 0, 0, 0, nil, err
+	}
+	return runIndex(ctx, h, cmd, ia)
+}
+
+func (r *indexRunner) start(h *hub.Hub, cmd string, ia indexArgs) {
+	ctx, cancel, gen := r.begin()
+	go func() {
+		defer r.finish(gen, cancel)
+		r.runMu.Lock()
+		defer r.runMu.Unlock()
+		if ctx.Err() != nil {
+			return
+		}
+		if _, _, _, _, _, err := runIndex(ctx, h, cmd, ia); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "[index] %s failed: %v\n", cmd, err)
+		}
+	}()
+}
+
+func (r *indexRunner) stop() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cancel == nil {
+		return false
+	}
+	r.cancel()
+	r.cancel = nil
+	return true
+}
+
+func (r *indexRunner) running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancel != nil
+}
+
+// stopAndWait cancels the current run and waits (bounded) for it to release
+// the index lock, so cache writes finish before the process exits.
+func (r *indexRunner) stopAndWait(d time.Duration) {
+	r.stop()
+	done := make(chan struct{})
+	go func() {
+		r.runMu.Lock()
+		r.runMu.Unlock()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		fmt.Fprintf(os.Stderr, "[index] shutdown: index still running after %s\n", d)
+	}
 }
 
 func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 	switch cmd {
+	case "PING":
+		return fmt.Sprintf(`,"backendVersion":%s,"protocolVersion":%d,"indexing":%t`,
+			quote(backendVersion), protocolVersion, indexes.running()), nil
+
+	case "CANCEL":
+		return fmt.Sprintf(`,"cancelled":%t`, indexes.stop()), nil
+
 	case "INIT", "REINDEX", "REBUILD":
-		if len(args) < 1 || args[0] == "" {
-			return "", fmt.Errorf("workspace root required")
+		ia, err := parseIndexArgs(args)
+		if err != nil {
+			return "", err
 		}
-		root := args[0]
-		if len(args) >= 4 {
-			h.ConfigureExcludes(args[3])
+		// REINDEX/REBUILD run in the background: navigation keeps answering
+		// from the previous snapshot instead of queueing behind a full scan.
+		if cmd == "REINDEX" || cmd == "REBUILD" {
+			indexes.start(h, cmd, ia)
+			return `,"started":true`, nil
 		}
-		cacheDir := ""
-		if len(args) >= 5 && args[4] != "" {
-			cacheDir = args[4]
-		} else {
-			cacheDir = filepath.Join(root, ".defhop")
-		}
-		roots := []string{root}
-		if len(args) >= 6 && args[5] != "" {
-			for _, extra := range strings.Split(args[5], "\n") {
-				extra = strings.TrimSpace(extra)
-				if extra != "" && !strings.EqualFold(filepath.Clean(extra), filepath.Clean(root)) {
-					roots = append(roots, extra)
-				}
-			}
-		}
-		if len(args) >= 7 {
-			deps.SetJDKHome(args[6])
-			h.ClearExternalLocateCache()
-		}
-		var (
-			files, syms, refs int
-			ms                int64
-			plugins           []string
-			err               error
-		)
-		if cmd == "REBUILD" {
-			files, syms, refs, ms, plugins, err = h.RebuildRoots(context.Background(), roots, cacheDir)
-		} else {
-			files, syms, refs, ms, plugins, err = h.InitRoots(context.Background(), roots, cacheDir)
-		}
+		files, syms, refs, ms, plugins, err := indexes.run(h, cmd, ia)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(
-			`,"files":%d,"symbols":%d,"references":%d,"milliseconds":%d,"backendVersion":%s,"plugins":%s,"roots":%d`,
-			files, syms, refs, ms, quote(backendVersion), quoteList(plugins), len(roots),
+			`,"files":%d,"symbols":%d,"references":%d,"milliseconds":%d,"backendVersion":%s,"protocolVersion":%d,"plugins":%s,"roots":%d`,
+			files, syms, refs, ms, quote(backendVersion), protocolVersion, quoteList(plugins), len(ia.roots),
 		), nil
 
 	case "UPDATE":
@@ -165,8 +319,8 @@ func dispatch(h *hub.Hub, cmd string, args []string) (string, error) {
 		files, syms, refs, plugins, prog := h.Status()
 		progJSON, _ := jsonMarshal(prog)
 		return fmt.Sprintf(
-			`,"files":%d,"symbols":%d,"references":%d,"plugins":%s,"backendVersion":%s,"progress":%s`,
-			files, syms, refs, quoteList(plugins), quote(backendVersion), progJSON,
+			`,"files":%d,"symbols":%d,"references":%d,"plugins":%s,"backendVersion":%s,"protocolVersion":%d,"indexing":%t,"progress":%s`,
+			files, syms, refs, quoteList(plugins), quote(backendVersion), protocolVersion, indexes.running(), progJSON,
 		), nil
 
 	case "DEF", "REFS", "IMPL", "ROUTE":

@@ -2,7 +2,7 @@
   "name": "defhop",
   "displayName": "Defhop for Java",
   "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "publisher": "vg0x00",
   "license": "MIT",
   "repository": {
@@ -55,6 +55,7 @@
     "onCommand:defhop.refreshIndex",
     "onCommand:defhop.rebuildIndex",
     "onCommand:defhop.status",
+    "onCommand:defhop.doctor",
     "onCommand:defhop.configureJdk",
     "onCommand:defhop.clearJdkHome",
     "onCommand:defhop.goDefinition",
@@ -75,6 +76,10 @@
       {
         "command": "defhop.status",
         "title": "Defhop: Show Output"
+      },
+      {
+        "command": "defhop.doctor",
+        "title": "Defhop: Doctor (environment + index status)"
       },
       {
         "command": "defhop.configureJdk",

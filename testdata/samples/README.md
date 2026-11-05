@@ -16,7 +16,7 @@ Covers:
 | **spring** | same-path Controller peer (`OrderController` ↔ `OrderCompatController`) |
 | **cloud** | OpenFeign ↔ Controller |
 | **mybatis** | Mapper ↔ XML; `@Select` annotation Mapper (Go to MyBatis SQL) |
-| **mybatisplus** | `ServiceImpl` / `baseMapper` |
+| **mybatisplus** | `ServiceImpl` / `baseMapper` (same-pkg + star-import Mapper `queryList`) |
 | **lombokdemo** | `@Data` / `@Builder`; `@NoArgs/@Required/@AllArgsConstructor` / `@SuperBuilder` |
 | **mapstructdemo** | `@Mapper` / `@Mapping` / Impl |
 | **gradle/** | `libs.versions.toml` Version Catalog (dependency discovery) |

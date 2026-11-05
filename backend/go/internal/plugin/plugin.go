@@ -21,8 +21,8 @@ type Core interface {
 // ChangeEvent notifies plugins that a file was replaced.
 type ChangeEvent struct {
 	PathKey string
-	Path    string // original path
-	Text    string // latest buffer (java or xml)
+	Path    string           // original path
+	Text    string           // latest buffer (java or xml)
 	Old     *model.FileSlice // java only; may be nil
 	New     *model.FileSlice // java only; may be nil (deleted)
 }
@@ -38,10 +38,10 @@ type Plugin interface {
 
 // Registry holds registered plugins and which ones are active.
 type Registry struct {
-	mu      sync.RWMutex
-	all     []Plugin
-	active  map[string]Plugin
-	order   []string
+	mu     sync.RWMutex
+	all    []Plugin
+	active map[string]Plugin
+	order  []string
 }
 
 func NewRegistry(plugins ...Plugin) *Registry {

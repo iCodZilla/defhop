@@ -1,10 +1,13 @@
 package store
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
+	"defhop/internal/model"
+	"defhop/internal/textenc"
 	"encoding/gob"
 	"encoding/hex"
-	"defhop/internal/model"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +15,42 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+// writeFileAtomic writes via a unique temp file + rename. Multiple VS Code
+// windows can share one workspace cache directory; readers must never observe
+// a half-written gob, and concurrent writers must not share a temp path.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	cleanup := func() {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+	}
+	if _, err := f.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := f.Chmod(perm); err != nil {
+		cleanup()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
 
 const cacheVersion = "v5" // bump: packed workspace.gob for cold start
 
@@ -52,6 +91,10 @@ func LoadPacked(cacheDir, wantFP string) map[string]*model.FileSlice {
 	out := make(map[string]*model.FileSlice, len(pw.Files))
 	for k, slice := range pw.Files {
 		fd := slice
+		// Gen is a per-process overlay counter. Persisting it would make the
+		// next session's first edit (gen 1) look older than the cached slice,
+		// so its UPDATE would be dropped. Cached content is always gen 0.
+		fd.Gen = 0
 		// Repair declaration pointers (same as per-file gob load).
 		decl := map[string]*model.Location{}
 		for i := range fd.Occs {
@@ -79,7 +122,7 @@ func SavePacked(cacheDir, fp string, files map[string]*model.FileSlice) error {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return err
 	}
-	_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
+	_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 	pw := packedWorkspace{
 		FP:    fp,
 		Files: make(map[string]model.FileSlice, len(files)),
@@ -89,23 +132,16 @@ func SavePacked(cacheDir, fp string, files map[string]*model.FileSlice) error {
 			continue
 		}
 		cp := *fd
+		cp.Gen = 0 // per-process counter; never persist (see LoadPacked)
 		cp.Symbols = copySymbols(fd.Symbols)
 		cp.Occs = copyOccs(fd.Occs)
 		pw.Files[k] = cp
 	}
-	tmp := packedPath(cacheDir) + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(&pw); err != nil {
 		return err
 	}
-	err = gob.NewEncoder(f).Encode(&pw)
-	f.Close()
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	_ = os.Remove(packedPath(cacheDir))
-	return os.Rename(tmp, packedPath(cacheDir))
+	return writeFileAtomic(packedPath(cacheDir), buf.Bytes(), 0644)
 }
 
 // cacheEntry is one persisted file slice plus content fingerprint.
@@ -148,12 +184,11 @@ func SaveManifest(cacheDir string, entries map[string]FileMeta) error {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return err
 	}
-	f, err := os.Create(manifestPath(cacheDir))
-	if err != nil {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(&cacheManifest{Entries: entries}); err != nil {
 		return err
 	}
-	defer f.Close()
-	return gob.NewEncoder(f).Encode(&cacheManifest{Entries: entries})
+	return writeFileAtomic(manifestPath(cacheDir), buf.Bytes(), 0644)
 }
 
 // FingerprintResult is the outcome of hashing one source file.
@@ -166,7 +201,9 @@ type FingerprintResult struct {
 
 // FingerprintFiles stats/hashes paths in parallel.
 // When mtime+size match the manifest, content is not re-read (warm path).
-func FingerprintFiles(paths []string, prev map[string]FileMeta, onProgress func(done, total int)) []FingerprintResult {
+// On ctx cancellation it returns early; unprocessed entries keep zero values,
+// so the caller must check ctx.Err() before using the result.
+func FingerprintFiles(ctx context.Context, paths []string, prev map[string]FileMeta, onProgress func(done, total int)) []FingerprintResult {
 	total := len(paths)
 	out := make([]FingerprintResult, total)
 	if total == 0 {
@@ -190,6 +227,9 @@ func FingerprintFiles(paths []string, prev map[string]FileMeta, onProgress func(
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
 				p := paths[i]
 				res := FingerprintResult{Path: p}
 				info, err := os.Stat(p)
@@ -223,6 +263,9 @@ func FingerprintFiles(paths []string, prev map[string]FileMeta, onProgress func(
 					}
 					continue
 				}
+				// Normalize to UTF-8 before hashing/parsing so GBK sources behave
+				// like UTF-8 ones (hash stays stable across encoding changes).
+				data = textenc.Decode(data)
 				hash := ContentHash(data)
 				res.Hash = hash
 				res.Data = data
@@ -236,7 +279,13 @@ func FingerprintFiles(paths []string, prev map[string]FileMeta, onProgress func(
 		}()
 	}
 	for i := range paths {
-		jobs <- i
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return out
+		case jobs <- i:
+		}
 	}
 	close(jobs)
 	wg.Wait()
@@ -248,7 +297,7 @@ func FingerprintFiles(paths []string, prev map[string]FileMeta, onProgress func(
 
 // LoadFileCache reads per-file gob entries from cacheDir/files/ in parallel.
 // pathToHash should include PathKey(path) entries. Returns pathKey -> FileSlice.
-func LoadFileCache(cacheDir string, pathToHash map[string]string) map[string]*model.FileSlice {
+func LoadFileCache(ctx context.Context, cacheDir string, pathToHash map[string]string) map[string]*model.FileSlice {
 	dir := filepath.Join(cacheDir, "files")
 	out := make(map[string]*model.FileSlice)
 	// Deduplicate by PathKey so alternate spellings of the same path are tried once.
@@ -283,6 +332,9 @@ func LoadFileCache(cacheDir string, pathToHash map[string]string) map[string]*mo
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
 				fd := loadOneFileCache(dir, j.key, j.hash)
 				if fd == nil {
 					continue
@@ -294,7 +346,13 @@ func LoadFileCache(cacheDir string, pathToHash map[string]string) map[string]*mo
 		}()
 	}
 	for key, hash := range seen {
-		jobs <- job{key: key, hash: hash}
+		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return out
+		case jobs <- job{key: key, hash: hash}:
+		}
 	}
 	close(jobs)
 	wg.Wait()
@@ -302,8 +360,8 @@ func LoadFileCache(cacheDir string, pathToHash map[string]string) map[string]*mo
 }
 
 // LoadFileCacheKeys loads only the requested pathKeys (hash must match).
-func LoadFileCacheKeys(cacheDir string, keysToHash map[string]string) map[string]*model.FileSlice {
-	return LoadFileCache(cacheDir, keysToHash)
+func LoadFileCacheKeys(ctx context.Context, cacheDir string, keysToHash map[string]string) map[string]*model.FileSlice {
+	return LoadFileCache(ctx, cacheDir, keysToHash)
 }
 
 func loadOneFileCache(dir, key, wantHash string) *model.FileSlice {
@@ -318,6 +376,7 @@ func loadOneFileCache(dir, key, wantHash string) *model.FileSlice {
 		return nil
 	}
 	fd := e.Slice
+	fd.Gen = 0 // see LoadPacked: overlay gens restart at 1 each process
 	if fd.ContentHash == "" {
 		fd.ContentHash = e.Hash
 	}
@@ -343,7 +402,7 @@ func SaveFileCache(cacheDir string, files map[string]*model.FileSlice, pathToHas
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
+	_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 	for key, fd := range files {
 		if fd == nil {
 			continue
@@ -359,16 +418,15 @@ func SaveFileCache(cacheDir string, files map[string]*model.FileSlice, pathToHas
 			continue
 		}
 		entry := cacheEntry{Hash: hash, Slice: *fd}
+		entry.Slice.Gen = 0 // per-process counter; never persist
 		entry.Slice.Symbols = copySymbols(fd.Symbols)
 		entry.Slice.Occs = copyOccs(fd.Occs)
 		name := fileCacheName(key)
-		f, err := os.Create(filepath.Join(dir, name))
-		if err != nil {
-			continue
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(&entry); err != nil {
+			return err
 		}
-		err = gob.NewEncoder(f).Encode(&entry)
-		f.Close()
-		if err != nil {
+		if err := writeFileAtomic(filepath.Join(dir, name), buf.Bytes(), 0644); err != nil {
 			return err
 		}
 	}
@@ -442,7 +500,7 @@ func EnsureCacheVersion(cacheDir string) {
 		_ = os.Remove(manifestPath(cacheDir))
 		_ = os.Remove(packedPath(cacheDir))
 		_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
-		_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
+		_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 	}
 }
 
@@ -453,5 +511,5 @@ func WipeCache(cacheDir string) {
 	}
 	_ = os.RemoveAll(cacheDir)
 	_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
-	_ = os.WriteFile(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
+	_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 }

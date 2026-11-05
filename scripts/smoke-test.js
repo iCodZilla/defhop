@@ -381,9 +381,16 @@ function run() {
         throw new Error("Feign syncItem should jump to Controller");
       }
 
-      // Warm cache INIT (REINDEX)
-      const warm = await req("REINDEX", [demo, "", "21", excludes, cacheDir]);
-      console.log("REINDEX warm", warm.files, "files", warm.milliseconds, "ms");
+      // Warm cache INIT (REINDEX). The backend runs it in the background and
+      // answers started:true; poll STATUS until indexing is done.
+      const warm0 = Date.now();
+      let warm = await req("REINDEX", [demo, "", "21", excludes, cacheDir]);
+      while (warm.started) {
+        if (Date.now() - warm0 > 300000) throw new Error("REINDEX timeout");
+        await new Promise((r) => setTimeout(r, 200));
+        warm = await req("STATUS", [], 10000);
+      }
+      console.log("REINDEX warm", warm.files, "files", Date.now() - warm0, "ms");
 
       if (!(init.files > 0)) throw new Error("no files indexed");
 

@@ -192,13 +192,19 @@ async function run(label, projectRoot) {
     samples.sort((a, b) => a - b);
 
     const warm0 = Date.now();
-    const warm = await req("REINDEX", [
+    let warm = await req("REINDEX", [
       projectRoot,
       "",
       "21",
       ".git,node_modules,target,.idea,logs,build",
       cache,
     ]);
+    // REINDEX is asynchronous (started:true); wait via STATUS.
+    while (warm.started) {
+      if (Date.now() - warm0 > 600000) throw new Error("REINDEX timeout");
+      await new Promise((r) => setTimeout(r, 300));
+      warm = await req("STATUS", [], 10000);
+    }
     const warmWall = Date.now() - warm0;
     const rssPeak = Math.max(rssAfterCold, rssMB(child.pid));
 
