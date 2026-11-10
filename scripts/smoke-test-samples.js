@@ -161,11 +161,24 @@ function run() {
         cacheDir,
       ]);
       console.log("INIT", init.files, "files", "plugins=", init.plugins, init.milliseconds, "ms");
-      const plugins = init.plugins || [];
+      if (!(init.files > 20)) throw new Error("expected samples to index many files, got " + init.files);
+      // Detect + plugins run after INIT (java-ready first); wait then assert plugins.
+      let plugins = [];
+      {
+        const t0 = Date.now();
+        for (;;) {
+          const st = await req("STATUS", [], 10000);
+          const phase = st.progress && st.progress.phase;
+          const pct = Number(st.progress && st.progress.pct) || 0;
+          plugins = st.plugins || [];
+          if ((phase === "done" || pct >= 100) && plugins.length) break;
+          if (Date.now() - t0 > 120000) throw new Error("plugins index timeout after INIT");
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
       for (const need of ["mybatis", "lombok", "spring", "mapstruct", "feign"]) {
         if (!plugins.includes(need)) throw new Error("missing plugin " + need);
       }
-      if (!(init.files > 20)) throw new Error("expected samples to index many files, got " + init.files);
 
       // ---- Java language ----
       let locs = await defFile(["samples", "lang", "LangDemo.java"], "Dog dog", (l) =>

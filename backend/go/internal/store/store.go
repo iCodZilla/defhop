@@ -99,6 +99,8 @@ func (s *Store) RemoveFile(path string) *model.FileSlice {
 }
 
 // ReplaceAll swaps the entire file map (used by cold INIT).
+// Key interning happens inside buildSnapshot (Key/OwnerKey/TargetKey only) —
+// full InternFileSlice on every Occ was too expensive for cold index.
 func (s *Store) ReplaceAll(files map[string]*model.FileSlice) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -209,14 +211,14 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 	for _, fd := range files {
 		for _, sym := range fd.Symbols {
 			if sym.Kind == "field" && sym.TypeKey != "" {
-				sym.TypeKey = normalizeTypeKey(snap, sym.TypeKey, fd.Imports)
+				sym.TypeKey = normalizeTypeKey(snap, sym.TypeKey, fd.Imports, fd.Package)
 			}
 			if sym.Kind == "type" {
 				for i, sk := range sym.SuperKeys {
-					sym.SuperKeys[i] = normalizeTypeKey(snap, sk, fd.Imports)
+					sym.SuperKeys[i] = normalizeTypeKey(snap, sk, fd.Imports, fd.Package)
 				}
 				if sym.ExtendsKey != "" {
-					sym.ExtendsKey = normalizeTypeKey(snap, sym.ExtendsKey, fd.Imports)
+					sym.ExtendsKey = normalizeTypeKey(snap, sym.ExtendsKey, fd.Imports, fd.Package)
 				}
 				// ExtendsArgs are bare FQNs (no T|). Star-import ql() may pin the
 				// wrong package (current pkg); re-resolve via imports + Simple.
@@ -225,11 +227,11 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 						continue
 					}
 					sym.ExtendsArgs[i] = strings.TrimPrefix(
-						normalizeTypeKey(snap, "T|"+a, fd.Imports), "T|")
+						normalizeTypeKey(snap, "T|"+a, fd.Imports, fd.Package), "T|")
 				}
 			}
 			if sym.Kind == "method" && sym.ReturnType != "" {
-				sym.ReturnType = normalizeTypeKey(snap, sym.ReturnType, fd.Imports)
+				sym.ReturnType = normalizeTypeKey(snap, sym.ReturnType, fd.Imports, fd.Package)
 			}
 		}
 	}
@@ -244,7 +246,7 @@ func buildSnapshot(files map[string]*model.FileSlice) *Snapshot {
 	return snap
 }
 
-func normalizeTypeKey(snap *Snapshot, key string, imports []string) string {
+func normalizeTypeKey(snap *Snapshot, key string, imports []string, filePkg string) string {
 	if key == "" {
 		return key
 	}
@@ -263,27 +265,42 @@ func normalizeTypeKey(snap *Snapshot, key string, imports []string) string {
 		}
 	}
 	cands := snap.Simple[simple]
-	if len(cands) == 1 {
-		return cands[0]
+	if len(cands) == 0 {
+		return key
 	}
-	if len(cands) > 1 {
-		// Prefer same-package when key was package-qualified or looks local.
-		pkgHint := packageOf(raw)
-		if pkgHint != "" {
-			want := "T|" + pkgHint + "." + simple
-			for _, c := range cands {
-				if c == want {
-					return c
-				}
+	// Prefer same-package / import evidence. Never accept a workspace-unique
+	// simple name alone — that caused wrong hops across unrelated packages.
+	pkgHint := packageOf(raw)
+	if pkgHint == "" {
+		pkgHint = filePkg
+	}
+	if pkgHint != "" {
+		want := "T|" + pkgHint + "." + simple
+		for _, c := range cands {
+			if c == want {
+				return c
 			}
 		}
+	} else {
+		// Default package: types are keyed as T|Simple.
+		want := "T|" + simple
 		for _, c := range cands {
-			pkg := packageOf(strings.TrimPrefix(c, "T|"))
-			for _, imp := range imports {
-				clean := strings.TrimSuffix(imp, ".*")
-				if clean == pkg {
+			if c == want {
+				return c
+			}
+		}
+	}
+	for _, c := range cands {
+		pkg := packageOf(strings.TrimPrefix(c, "T|"))
+		for _, imp := range imports {
+			if strings.HasSuffix(imp, ".*") {
+				if strings.TrimSuffix(imp, ".*") == pkg {
 					return c
 				}
+				continue
+			}
+			if imp == pkg+"."+simple || strings.HasSuffix(imp, "."+simple) && packageOf(imp) == pkg {
+				return c
 			}
 		}
 	}
@@ -350,10 +367,12 @@ func (snap *Snapshot) File(pathKey string) *model.FileSlice {
 
 func (snap *Snapshot) ResolveTypeKey(key string, fd *model.FileSlice) string {
 	imps := []string(nil)
+	pkg := ""
 	if fd != nil {
 		imps = fd.Imports
+		pkg = fd.Package
 	}
-	return normalizeTypeKey(snap, key, imps)
+	return normalizeTypeKey(snap, key, imps, pkg)
 }
 
 func (snap *Snapshot) FindField(typeKey, name string) *model.Symbol {

@@ -19,20 +19,27 @@ func Resolve(snap *store.Snapshot, fd *model.FileSlice, offset int, token, sourc
 		if token == "" {
 			return nil, ""
 		}
-		// Field/type annotation sites often have no Occ yet ? resolve simple type names.
+		// Field/type annotation sites often have no Occ yet — resolve via
+		// imports / same-package (ResolveTypeKey), never a workspace-wide
+		// same-name scan (that caused wrong hops in large indexes).
 		if token[0] >= 'A' && token[0] <= 'Z' {
 			if q := snap.ResolveTypeKey("T|"+token, fd); snap.SymTab[q] != nil {
 				return snap.SymTab[q], q
 			}
 		}
-		var matches []*model.Symbol
-		for _, sym := range snap.SymTab {
-			if sym.Name == token && sym.Declaration != nil {
-				matches = append(matches, sym)
+		// Same-file unique declaration only.
+		var match *model.Symbol
+		for _, sym := range fd.Symbols {
+			if sym == nil || sym.Name != token || sym.Declaration == nil {
+				continue
 			}
+			if match != nil {
+				return nil, token
+			}
+			match = sym
 		}
-		if len(matches) == 1 {
-			return matches[0], matches[0].Key
+		if match != nil {
+			return match, match.Key
 		}
 		return nil, token
 	}

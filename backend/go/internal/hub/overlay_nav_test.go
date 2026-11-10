@@ -69,6 +69,47 @@ func TestNavigateSeesOtherFileOverlayEdit(t *testing.T) {
 	}
 }
 
+// Clean (already-published) overlays must not be re-parsed on Navigate.
+func TestNavigateSkipsPublishedOverlays(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "A.java")
+	callerPath := filepath.Join(dir, "Caller.java")
+	src := "package p;\npublic class A {\n  public static void a(){}\n}\n"
+	callerSrc := "package p;\nclass Caller { void m(){ A.a(); } }\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(callerPath, []byte(callerSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := New()
+	h.Index.PutFile(java.Parse(path, src, 0))
+	h.Index.PutFile(java.Parse(callerPath, callerSrc, 0))
+
+	key := store.PathKey(path)
+	gen := h.Overlay.Put(key, path, src)
+	// Async worker already published this gen into the index.
+	if !h.Index.BumpGen(path, gen) {
+		t.Fatal("BumpGen failed")
+	}
+	h.Overlay.MarkPublished(key, gen)
+	if n := len(h.Overlay.DirtyMeta()); n != 0 {
+		t.Fatalf("precondition: dirty=%d", n)
+	}
+
+	offset := strings.Index(callerSrc, "a()")
+	line, col := offsetToLineCol(callerSrc, offset)
+	locs, _ := h.Navigate(model.NavRequest{
+		Kind: model.NavDef, Path: callerPath, Line: line, Character: col,
+	})
+	if len(locs) == 0 {
+		t.Fatal("expected DEF to A.a")
+	}
+	if n := len(h.Overlay.DirtyMeta()); n != 0 {
+		t.Fatalf("Navigate re-dirtied clean overlay: dirty=%d", n)
+	}
+}
+
 // Many dirty overlays must all commit on Navigate (no flush cap) — AI multi-file edits.
 func TestNavigateFlushesAllStaleOverlays(t *testing.T) {
 	dir := t.TempDir()

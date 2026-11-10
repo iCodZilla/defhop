@@ -341,15 +341,15 @@ func normalizeFileSymbols(snap *Snapshot, fd *model.FileSlice) {
 	}
 	for _, sym := range fd.Symbols {
 		if sym.Kind == "field" && sym.TypeKey != "" {
-			sym.TypeKey = normalizeTypeKey(snap, sym.TypeKey, fd.Imports)
+			sym.TypeKey = normalizeTypeKey(snap, sym.TypeKey, fd.Imports, fd.Package)
 		}
 		if sym.Kind == "type" {
 			for i, sk := range sym.SuperKeys {
-				sym.SuperKeys[i] = normalizeTypeKey(snap, sk, fd.Imports)
+				sym.SuperKeys[i] = normalizeTypeKey(snap, sk, fd.Imports, fd.Package)
 			}
 		}
 		if sym.Kind == "method" && sym.ReturnType != "" {
-			sym.ReturnType = normalizeTypeKey(snap, sym.ReturnType, fd.Imports)
+			sym.ReturnType = normalizeTypeKey(snap, sym.ReturnType, fd.Imports, fd.Package)
 		}
 	}
 }

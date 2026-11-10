@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.14] - 2026-11-10
+
+### Changed
+- **Faster time-to-navigate** — INIT returns after the Java core index is published; Spring/MyBatis/Feign plugin indexing + deps continue in the background. Extension `ensureReady` unlocks on `navReady` instead of waiting for full INIT.
+- **Faster Java unlock** — framework Detect sampling runs after the core index is published (parallel reads); no longer blocks Walk/parse.
+- **Faster extension start** — skip JDK Program Files auto-walk before spawning the backend; auto-detect runs after navigation unlocks.
+- **Parallel workspace scan** — top-level directories are WalkDir'd concurrently (big win on multi-module trees).
+- **More parse workers** — up to `2×CPU` (cap 32) for cold Java parse.
+- **Bounded Detect fallback** — framework hint backfill reads at most 200 extra files.
+- **Concurrent request loop** — DEF/REFS/STATUS no longer wait behind a slow sync `UPDATE`/`INDEX` on the stdin loop; mutating commands stay serialized.
+- **Dirty overlay flush** — Navigate only re-indexes overlays marked dirty by `UPDATE`, not every open buffer.
+- **Stricter type resolve** — drop workspace-wide unique simple-name guesses; require same-package or import evidence.
+- **Plugin path routing** — XML → MyBatis only, config files → Spring only.
+- **Split engine modules** — `hub` indexing / live overlay / navigation live in separate files; VS Code host split into `extension.js` + `lib/client.js` + `lib/util.js`.
+- **String intern** — helpers kept; hot path uses SymTab/Refs key-only intern (full Occ/Symbol intern removed from cold INIT / PutFile).
+- **Multi-window cache lock** — `index.lock` serializes INIT/REBUILD wipe+write; wipe preserves the lock file.
+
+### Fixed
+- **Index speed regression** — remove full Occ/Symbol `InternFileSlice` from cold INIT / PutFile (was millions of sync.Map ops). Snapshot still interns SymTab/Refs keys only.
+- **Stuck cache lock** — steal `index.lock` immediately when the holder PID is dead; stale window shortened to 2 minutes; log when waiting.
+
 ## [1.0.13] - 2026-11-05
 
 ### Fixed

@@ -36,6 +36,32 @@ const (
 	scannerMaxLine = 64 << 20
 )
 
+// outMu serializes stdout replies when requests run concurrently.
+var outMu sync.Mutex
+
+// writeMu serializes mutating commands so INDEX/UPDATE/REMOVE do not interleave.
+var writeMu sync.Mutex
+
+func replyJSON(id, payload string, err error) {
+	outMu.Lock()
+	defer outMu.Unlock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[request] failed: %v\n", err)
+		fmt.Fprintf(os.Stdout, `{"id":%s,"ok":false,"error":%s}`+"\n", quote(id), quote(err.Error()))
+		return
+	}
+	fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true%s}`+"\n", id, payload)
+}
+
+func isWriteCmd(cmd string) bool {
+	switch cmd {
+	case "UPDATE", "INDEX", "REMOVE", "DROPOVERLAY", "INIT", "REINDEX", "REBUILD":
+		return true
+	default:
+		return false
+	}
+}
+
 func main() {
 	fmt.Fprintf(os.Stderr, "[progress] backend %s starting\n", backendVersion)
 	h := hub.New(
@@ -49,6 +75,7 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), scannerMaxLine)
 
+	var inFlight sync.WaitGroup
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -60,9 +87,7 @@ func main() {
 		}
 		id, cmd := parts[0], strings.ToUpper(parts[1])
 		if len(line) > maxRequestLine {
-			fmt.Fprintf(os.Stdout,
-				`{"id":%s,"ok":false,"error":"request too large; open the file to navigate it"}`+"\n",
-				quote(id))
+			replyJSON(id, "", fmt.Errorf("request too large; open the file to navigate it"))
 			continue
 		}
 		var args []string
@@ -77,19 +102,35 @@ func main() {
 			}
 		}
 		if cmd == "SHUTDOWN" {
+			// Drain in-flight nav/writes before tearing down the index.
+			done := make(chan struct{})
+			go func() {
+				inFlight.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(8 * time.Second):
+				fmt.Fprintf(os.Stderr, "[io] shutdown: requests still in flight\n")
+			}
 			indexes.stopAndWait(8 * time.Second)
 			h.FlushCachePersist()
-			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true}`+"\n", id)
+			replyJSON(id, "", nil)
 			break
 		}
 
-		payload, err := dispatch(h, cmd, args)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[request] %s failed: %v\n", cmd, err)
-			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":false,"error":%s}`+"\n", quote(id), quote(err.Error()))
-		} else {
-			fmt.Fprintf(os.Stdout, `{"id":%s,"ok":true%s}`+"\n", id, payload)
-		}
+		// Run every request off the stdin loop so a slow INDEX/sync UPDATE
+		// cannot stall DEF/REFS/STATUS. Writes are still serialized via writeMu.
+		inFlight.Add(1)
+		go func(id, cmd string, args []string) {
+			defer inFlight.Done()
+			if isWriteCmd(cmd) {
+				writeMu.Lock()
+				defer writeMu.Unlock()
+			}
+			payload, err := dispatch(h, cmd, args)
+			replyJSON(id, payload, err)
+		}(id, cmd, args)
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "[io] stdin closed: %v\n", err)

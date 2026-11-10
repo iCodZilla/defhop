@@ -100,10 +100,12 @@ npx @vscode/vsce publish
 
 | Path | Role |
 |------|------|
-| `extension.js` | VS Code host |
+| `extension.js` | VS Code activate/deactivate |
+| `lib/client.js` | Backend process + IPC client |
+| `lib/util.js` | Paths, progress helpers, disk watchers |
 | `package.json` | Manifest / marketplace metadata |
 | `README.md` | Marketplace product page |
-| `backend/go` | Index + navigation engine |
+| `backend/go` | Index + navigation engine (`hub` = hub/index/live/navigate) |
 | `backend/defhop-*` | Bundled binaries (win/linux/darwin) |
 | `media/` | Icon, banner, donation QR |
 | `scripts/smoke-test.js` | Navigation smoke checks |

@@ -504,12 +504,24 @@ func EnsureCacheVersion(cacheDir string) {
 	}
 }
 
-// WipeCache removes all on-disk index artifacts under cacheDir (gob, deps extracts, etc.).
+// WipeCache removes on-disk index artifacts under cacheDir (gob, deps extracts, etc.).
+// Preserves index.lock so a holder of AcquireIndexLock is not unlocked by the wipe.
 func WipeCache(cacheDir string) {
 	if cacheDir == "" {
 		return
 	}
-	_ = os.RemoveAll(cacheDir)
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
+		_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
+		return
+	}
+	for _, e := range entries {
+		if e.Name() == indexLockName {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(cacheDir, e.Name()))
+	}
 	_ = os.MkdirAll(filepath.Join(cacheDir, "files"), 0755)
 	_ = writeFileAtomic(filepath.Join(cacheDir, "version"), []byte(cacheVersion), 0644)
 }

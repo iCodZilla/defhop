@@ -26,12 +26,16 @@ type Meta struct {
 
 // Store keeps unsaved / latest buffers. Navigation prefers this over disk.
 type Store struct {
-	mu   sync.RWMutex
-	data map[string]*Entry // lowercase slash path
+	mu    sync.RWMutex
+	data  map[string]*Entry // lowercase slash path
+	dirty map[string]struct{} // keys whose overlay gen may exceed the index
 }
 
 func New() *Store {
-	return &Store{data: make(map[string]*Entry)}
+	return &Store{
+		data:  make(map[string]*Entry),
+		dirty: make(map[string]struct{}),
+	}
 }
 
 // Put replaces the buffer and bumps generation. Returns the new gen.
@@ -48,6 +52,7 @@ func (s *Store) Put(pathKey, path, text string) uint64 {
 		e.Path = path
 	}
 	e.Gen++
+	s.dirty[pathKey] = struct{}{}
 	return e.Gen
 }
 
@@ -83,6 +88,30 @@ func (s *Store) AllMeta() []Meta {
 	return out
 }
 
+// DirtyMeta lists overlays that still need index publish (no Text copy).
+func (s *Store) DirtyMeta() []Meta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Meta, 0, len(s.dirty))
+	for k := range s.dirty {
+		e := s.data[k]
+		if e == nil {
+			continue
+		}
+		out = append(out, Meta{Key: k, Path: e.Path, Gen: e.Gen})
+	}
+	return out
+}
+
+// MarkPublished clears the dirty bit when gen still matches the overlay.
+func (s *Store) MarkPublished(pathKey string, gen uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.data[pathKey]; e != nil && e.Gen == gen {
+		delete(s.dirty, pathKey)
+	}
+}
+
 // All returns a snapshot of every overlay entry (includes Text — prefer AllMeta).
 func (s *Store) All() []Snapshot {
 	s.mu.RLock()
@@ -99,4 +128,5 @@ func (s *Store) Remove(pathKey string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.data, pathKey)
+	delete(s.dirty, pathKey)
 }

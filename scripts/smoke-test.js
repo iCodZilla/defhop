@@ -87,7 +87,19 @@ function run() {
       const excludes = ".git,node_modules,target,.idea,.cache,.defhop";
       const init = await req("INIT", [demo, "", "21", excludes, cacheDir]);
       console.log("INIT", init.files, "files", "plugins=", init.plugins);
-      const plugins = init.plugins || [];
+      let plugins = [];
+      {
+        const t0 = Date.now();
+        for (;;) {
+          const st = await req("STATUS", [], 10000);
+          const phase = st.progress && st.progress.phase;
+          const pct = Number(st.progress && st.progress.pct) || 0;
+          plugins = st.plugins || [];
+          if ((phase === "done" || pct >= 100) && plugins.length) break;
+          if (Date.now() - t0 > 120000) throw new Error("plugins index timeout after INIT");
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
       for (const need of ["mybatis", "lombok", "spring", "mapstruct", "feign"]) {
         if (!plugins.includes(need)) throw new Error("missing plugin " + need);
       }
