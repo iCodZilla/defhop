@@ -384,10 +384,16 @@ async function activate(context) {
     }),
     // Incremental: VS Code create/delete + disk watcher (AI Write / external edits)
     vscode.workspace.onDidCreateFiles((event) => {
-      client.scheduleDiskIndex(event.files.filter(isIndexedFile).map((u) => u.fsPath));
+      const excludes = client._excludeDirectories();
+      client.scheduleDiskIndex(
+        event.files.filter((u) => isIndexedFile(u, excludes)).map((u) => u.fsPath),
+      );
     }),
     vscode.workspace.onDidDeleteFiles((event) => {
-      client.scheduleDiskRemove(event.files.filter(isIndexedFile).map((u) => u.fsPath));
+      const excludes = client._excludeDirectories();
+      client.scheduleDiskRemove(
+        event.files.filter((u) => isIndexedFile(u, excludes)).map((u) => u.fsPath),
+      );
     }),
     ...watchIndexedDiskFiles(client),
     vscode.workspace.onDidChangeConfiguration(async (event) => {

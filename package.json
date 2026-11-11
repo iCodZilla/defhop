@@ -2,7 +2,7 @@
   "name": "defhop",
   "displayName": "Defhop for Java",
   "description": "Java navigation helper powered by a Go engine. Instant go-to-definition and references - lightweight, fast, built for reading code.",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "publisher": "vg0x00",
   "license": "MIT",
   "repository": {
@@ -140,11 +140,15 @@
             ".git",
             ".idea",
             ".defhop",
+            ".gradle",
             "node_modules",
             "logs",
-            "target"
+            "target",
+            "build",
+            "out",
+            "dist"
           ],
-          "description": "Directories skipped during the initial source scan."
+          "description": "Directories skipped during the initial source scan and live disk INDEX (watchers)."
         },
         "defhop.jdkHome": {
           "type": "string",

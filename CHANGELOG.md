@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.15] - 2026-11-11
+
+### Fixed
+- **Stuck「正在同步改动」** — live watchers / disk INDEX skip `target`, `.defhop`, `build`, `out`, etc.; batch INDEX at 64 files so Maven/`deps` storms no longer pin the sync badge.
+
 ## [1.0.14] - 2026-11-10
 
 ### Changed

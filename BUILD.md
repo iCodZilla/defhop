@@ -65,8 +65,13 @@ The extension picks `defhop-${platform}-${arch}` (never runs `.exe` on Linux/WSL
 
 ## Package VSIX
 
+Bump `package.json` version **only when releasing** (not on every local compile). Keep a single latest VSIX under `dist/`:
+
 ```powershell
-npx @vscode/vsce package --out dist/defhop-1.0.0.vsix --allow-missing-repository --baseContentUrl "https://example.invalid/defhop" --baseImagesUrl "https://example.invalid/defhop"
+$Version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+New-Item -ItemType Directory -Force -Path dist | Out-Null
+Remove-Item dist\*.vsix -ErrorAction SilentlyContinue
+npx @vscode/vsce package --out "dist/defhop-$Version.vsix" --allow-missing-repository --baseContentUrl "https://example.invalid/defhop" --baseImagesUrl "https://example.invalid/defhop"
 ```
 
 Then restore relative image paths in the VSIX `readme.md` from the repo `README.md` (Marketplace / sideload need `media/...` relatives). Or install from folder:
@@ -78,12 +83,12 @@ code --install-extension .
 ## Install (dev)
 
 - `Developer: Install Extension from Location…` → this repo root  
-- or `code --install-extension .\dist\defhop-1.0.0.vsix`  
+- or `code --install-extension .\dist\defhop-<version>.vsix`  
 - then **Reload Window**
 
 ## Publish
 
-Publisher id: `vg0x00` (see `package.json`).
+Publisher id: `vg0x00` (see `package.json`). After packaging the bumped version:
 
 ```powershell
 npx @vscode/vsce login vg0x00
